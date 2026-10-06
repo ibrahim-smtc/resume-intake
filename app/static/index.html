@@ -31,6 +31,7 @@
       background: #c3ccd6; border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
     #thread::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, .tbl::-webkit-scrollbar-thumb:hover { background: #a9b4c1; background-clip: padding-box; }
     #thread::-webkit-scrollbar-track, pre::-webkit-scrollbar-track, .tbl::-webkit-scrollbar-track, textarea::-webkit-scrollbar-track { background: transparent; }
+    #thread::-webkit-scrollbar-track { margin: 22px 0 10px; }   /* keeps the thumb clear of the panel's rounded corner */
     #thread::-webkit-scrollbar-button, pre::-webkit-scrollbar-button, .tbl::-webkit-scrollbar-button, textarea::-webkit-scrollbar-button { display: none; }
     @supports not selector(::-webkit-scrollbar) { #thread, pre, .tbl, textarea { scrollbar-width: thin; scrollbar-color: #c3ccd6 transparent; } }
 
@@ -131,7 +132,14 @@
        becomes the whole conversation: the messages are inside it and the text box stays at its bottom. */
     .panel { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; width: calc(100% - 170px); max-width: 1100px; margin: 0 auto;
       background: #fff; color: var(--ink); border-radius: 30px 30px 0 0; box-shadow: 0 -10px 50px rgba(0, 20, 50, .30);
-      transition: flex-grow .55s cubic-bezier(.2, .8, .2, 1); }
+      transition: flex-grow .55s cubic-bezier(.2, .8, .2, 1); position: relative; }
+    /* A small, quiet button in the panel's corner: minimise the conversation back to the first look, and bring it back. */
+    #fold { all: unset; position: absolute; top: 10px; right: 14px; z-index: 5; width: 26px; height: 26px; border-radius: 50%; display: none;
+      place-items: center; cursor: pointer; color: #aab4c0; opacity: .8; transition: background .15s, color .15s; }
+    #fold:hover { background: #eef1f5; color: #5b6776; opacity: 1; }
+    .frame.has-chat #fold { display: grid; }
+    #fold svg { width: 16px; height: 16px; transition: transform .25s; }
+    .frame:not(.chatting) #fold svg { transform: rotate(180deg); }
     .panel:focus-within { box-shadow: 0 -10px 50px rgba(0, 20, 50, .30), 0 0 0 3px rgba(156, 196, 255, .85); }  /* the ring replaces the textarea's own outline */
     .frame.chatting .panel { flex-grow: 1; }
     .box { flex: none; padding: 16px 18px 12px 16px; }
@@ -194,6 +202,9 @@
     </section>
 
     <div class="panel" id="panel">
+      <button type="button" id="fold" aria-label="Minimise or expand the conversation" title="Minimise / expand">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
       <div id="thread" role="log" aria-live="polite" aria-label="Conversation"><div class="thread-in" id="thread-in"></div></div>
 
       <form class="box" id="form" autocomplete="off">
@@ -302,8 +313,9 @@
     });
 
     let greeted = false;
+    document.getElementById("fold").addEventListener("click", () => frame.classList.toggle("chatting"));
     function startChat() {
-      frame.classList.add("chatting");
+      frame.classList.add("chatting", "has-chat");
       if (!greeted) {   // an empty white panel would look broken, so the assistant says hello as it opens
         greeted = true;
         addBot(el("div", "Hi! Click + to attach a candidate's resume (PDF or DOCX) or a job description (PDF, DOCX, TXT or DOC), " +
