@@ -6,8 +6,8 @@ All pages are fetched in parallel (769 candidates take about 3 seconds) and kept
 kept, never contact details, date of birth or the password-style `otp` field the API also returns.
 
 Scoring is the same as for resume -> jobs (matching.score_fit): hardcoded rules, no AI. Candidates who are already hired or
-being onboarded are left out. What this can't do yet: tell who is already on the job (no endpoint found for it), so
-someone may be suggested for a job they are already in.
+being onboarded are left out, and so are the ones already on the job (GET /screening/job/{id}/existing-applicants, the call
+behind the job's own screening list).
 """
 import asyncio
 import time
@@ -143,27 +143,52 @@ def rank(job: dict, people: list, top_k: int = TOP_K):
     return scored[:top_k], len(people) - len(eligible)
 
 
+async def on_job(job_id: str | None):
+    """The long ids of the candidates already on this job (any stage). Returns (set of ids, error message)."""
+    headers = questlight.auth_headers()
+    if not headers or not job_id:
+        return set(), "QUESTLIGHT_TOKEN is not set" if not headers else "the job has no id"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_S)) as client:
+            resp = await client.get(f"{questlight.api_base()}/screening/job/{job_id}/existing-applicants", headers=headers)
+    except httpx.HTTPError as exc:
+        return set(), f"couldn't read who is already on the job ({type(exc).__name__})"
+    if resp.status_code != 200:
+        return set(), f"couldn't read who is already on the job (HTTP {resp.status_code})"
+    try:
+        data = resp.json()["data"]
+    except (ValueError, KeyError, TypeError):
+        return set(), "couldn't read who is already on the job (unexpected format)"
+    return {str(x.get("_id") if isinstance(x, dict) else x) for x in data or []}, None
+
+
 async def find_for_job(job: dict, top_k: int = TOP_K) -> dict:
-    """Returns {"status": ok | no_strong_match | failed, "message", "considered", "left_out", "candidates"}.
+    """Returns {"status": ok | no_strong_match | failed, "message", "considered", "left_out", "already_on_job",
+    "candidates"}. Candidates already on the job are not suggested (if that list can't be read, "on_job_check" says so).
     The message never holds a name: it goes to the audit log."""
     people, err = await fetch_candidates()
     if err:
-        return {"status": "failed", "message": err, "considered": 0, "left_out": 0, "candidates": []}
+        return {"status": "failed", "message": err, "considered": 0, "left_out": 0, "already_on_job": 0, "candidates": []}
     top_k = max(1, min(int(top_k), MAX_K))
     with tracing.span("score candidates") as s:
-        best, left_out = rank(job, people, top_k)
-        considered = len(people) - left_out
-        s.set(candidates_scored=considered, left_out=left_out, best_score=best[0]["score"] if best else None)
+        there, check_err = await on_job(job.get("_id"))
+        pool = [p for p in people if p["id"] not in there]
+        best, left_out = rank(job, pool, top_k)
+        considered = len(pool) - left_out
+        s.set(candidates_scored=considered, left_out=left_out, already_on_job=len(people) - len(pool),
+              best_score=best[0]["score"] if best else None)
     note = " (only the first %d candidates were read)" % (MAX_PAGES * PAGE_SIZE) if _cache["truncated"] else ""
+    out = {"considered": considered, "left_out": left_out, "already_on_job": len(people) - len(pool), "candidates": best}
+    if check_err:
+        out["on_job_check"] = check_err + ": a suggested candidate may already be on the job"
     if not best:
-        return {"status": "failed", "message": "there are no candidates to rank: everyone is hired or in onboarding" + note,
-                "considered": 0, "left_out": left_out, "candidates": []}
-    out = {"considered": considered, "left_out": left_out, "candidates": best}
+        return {"status": "failed", **out, "message": "there are no candidates to rank: everyone is hired, in onboarding, "
+                "or already on the job" + note}
     if best[0]["score"] < matching.WEAK_BELOW:
         return {"status": "no_strong_match", **out, "message": f"no strong candidate among {considered} (best score is "
                 f"{best[0]['score']}, under {matching.WEAK_BELOW}){note}"}
     return {"status": "ok", **out, "message": f"best score {best[0]['score']} out of {considered} candidates considered, "
-            f"{left_out} left out as hired or in onboarding{note}"}
+            f"{left_out} left out as hired or in onboarding, {out['already_on_job']} already on the job{note}"}
 
 
 # ---------- putting candidates on the job ----------
@@ -194,6 +219,6 @@ async def add_to_job(job: dict, found: list) -> list:
     """Puts each candidate on the job at the Screening stage, one at a time. Returns [{"candidate", "status", "message"}]."""
     results = []
     for p in found:
-        r = await questlight.add_to_screening(p["id"], job["_id"])
+        r = await questlight.add_to_screening(p["id"], job["_id"], p["status"])
         results.append({"candidate": p["code"], **r})
     return results

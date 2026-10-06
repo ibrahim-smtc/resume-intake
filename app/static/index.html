@@ -81,6 +81,7 @@
       color: #fff; font-size: 12.5px; font-weight: 700; letter-spacing: .03em; }
     .ftype.pdf { background: #df4f4b; }
     .ftype.doc { background: #2f6fd6; }
+    .ftype.txt { background: #6b7684; }
     .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
     .working { display: flex; align-items: center; gap: 12px; color: var(--muted); }
     .spin { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid #d3dbe5; border-top-color: #1d4f9c; animation: spin .8s linear infinite; flex: none; }
@@ -198,7 +199,7 @@
         <div class="chip" id="chip"><span id="chip-name"></span><button type="button" id="chip-x" aria-label="Remove the attached file">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
         <div class="row">
-          <input id="picker" type="file" accept=".pdf,.docx" hidden>
+          <input id="picker" type="file" accept=".pdf,.docx,.txt,.doc" hidden>
           <button class="round" id="plus" type="button" aria-label="Attach a resume (PDF or DOCX)" title="Attach a resume (PDF or DOCX)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
           </button>
@@ -207,7 +208,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
           </button>
         </div>
-        <div class="hint">PDF or DOCX, up to <span id="max-mb">5</span> MB. Drag and drop a file anywhere on this page. Type /tools to see what I can do.</div>
+        <div class="hint">A resume (PDF, DOCX) or a job description (PDF, DOCX, TXT, DOC), up to <span id="max-mb">5</span> MB. Drag and drop anywhere on this page. Type /tools to see what I can do.</div>
       </form>
     </div>
   </div>
@@ -260,7 +261,7 @@
     }
 
     function fileProblem(file) {
-      if (!/\.(pdf|docx)$/i.test(file.name)) return `${file.name}: I can only read PDF or DOCX files.`;
+      if (!/\.(pdf|docx|txt|doc)$/i.test(file.name)) return `${file.name}: I can only read PDF, DOCX, TXT or DOC files.`;
       if (file.size > maxMb * 1024 * 1024) return `${file.name} is larger than ${maxMb} MB.`;
       if (file.size === 0) return `${file.name} is empty.`;
       return null;
@@ -304,8 +305,10 @@
       frame.classList.add("chatting");
       if (!greeted) {   // an empty white panel would look broken, so the assistant says hello as it opens
         greeted = true;
-        addBot(el("div", "Hi! Click + to attach a candidate's resume (PDF or DOCX), or drag and drop it here, then press Enter. " +
-          "I'll screen it, create the profile in Questlight and match it to your open roles." +
+        addBot(el("div", "Hi! Click + to attach a candidate's resume (PDF or DOCX) or a job description (PDF, DOCX, TXT or DOC), " +
+          "or drag and drop it here, then press Enter. For a resume I create the profile in Questlight and match it to your open " +
+          "roles; for a JD I create the job and screen the best candidates for it." +
+          (agentMode ? " You can also paste a JD straight into the chat." : "") +
           (agentMode ? " You can also ask me what came in recently." : "") + " Type /tools to see everything I can do."));
       }
     }
@@ -326,13 +329,14 @@
       return b;
     }
 
-    // A file as a coloured type badge (red PDF, blue DOC) next to its name without the extension.
+    // A file as a coloured type badge (red PDF, blue DOC for Word, grey TXT) next to its name without the extension.
     function fileItem(file) {
-      const isPdf = /\.pdf$/i.test(file.name);
+      const ext = (file.name.match(/\.(pdf|docx|doc|txt)$/i) || ["", "pdf"])[1].toLowerCase();
+      const type = ext === "pdf" ? "pdf" : ext === "txt" ? "txt" : "doc";
       const item = el("span", undefined, "fileinfo");
-      const name = el("span", file.name.replace(/\.(pdf|docx)$/i, ""), "fname");
+      const name = el("span", file.name.replace(/\.(pdf|docx|doc|txt)$/i, ""), "fname");
       name.title = file.name;
-      item.append(el("span", isPdf ? "PDF" : "DOC", "ftype " + (isPdf ? "pdf" : "doc")), name);
+      item.append(el("span", type.toUpperCase(), "ftype " + type), name);
       return item;
     }
 
@@ -457,7 +461,7 @@
     async function run(file) {
       addUser(fileItem(file));
       const working = el("div", undefined, "working");
-      working.append(el("div", undefined, "spin"), el("span", "Reading the resume… this can take up to a minute"));
+      working.append(el("div", undefined, "spin"), el("span", "Reading the file… a resume takes up to a minute, a job description up to three"));
       const bubble = addBot(working);
       setBusy(true);
 
@@ -498,7 +502,61 @@
 
     function badge(textContent, kind) { return el("div", textContent, "badge " + kind); }
 
+    // A job description (the server took it in as one): the job, what is missing, and the candidates screened for it.
+    function jobView(r) {
+      const box = el("div");
+      if (r.kind !== "job_description") {
+        box.append(badge(r.kind === "junk" ? "Junk: discarded" : "Needs recruiter review", r.kind === "junk" ? "junk" : "needs_review"),
+          el("p", r.reason, "reason"));
+        traceBlock(box, r.trace);
+        return box;
+      }
+      const job = r.job || {};
+      const names = { created: "Job created in Questlight", not_created: "Job not created: details missing",
+        duplicate_found: "Not created: the same job is already open", skipped: "Job not created", failed: "Job creation failed" };
+      box.append(badge("Job description", "accepted"),
+        badge(names[job.status] || job.status, job.status === "created" ? "accepted" : job.status === "failed" ? "junk" : "needs_review"),
+        el("p", job.message + (job.job_id ? " (" + job.job_id + ")" : ""), "reason"));
+      const p = job.preview || {};
+      const facts = [["Title", p.title], ["Client", p.client], ["Location", p.location], ["Experience", p.experience],
+        ["Salary", p.salary], ["Skills", (p.skills || []).join(", ")]].filter(([, v]) => v);
+      if (facts.length) box.appendChild(el("p", facts.map(([k, v]) => k + ": " + v).join("  ·  "), "reason"));
+      (job.adjusted || []).forEach(a => box.appendChild(el("div", "Filled in: " + a, "note")));
+      if ((job.missing_items || []).length) {
+        box.appendChild(el("div", "Questlight also needs: " + job.missing_items.map(i => i.what).join("; ") +
+          ". The assistant asks for these; without it, add them in Questlight.", "note"));
+      }
+      (job.duplicates || []).forEach(d => box.appendChild(el("div", "Already open: " + [d.job_id, d.title, d.client, d.city].filter(Boolean).join(" · "), "note")));
+      const scan = job.candidates;
+      if (scan) {
+        box.appendChild(el("p", scan.message, "reason"));
+        const screened = {};
+        ((job.screening || {}).results || []).forEach(x => { screened[x.candidate] = x.status; });
+        if ((scan.candidates || []).length) {
+          const table = el("table", undefined, "roles");
+          const head = el("tr");
+          ["#", "Candidate", "Score", "Skills matched", "Screening"].forEach(h => head.appendChild(el("th", h)));
+          table.appendChild(head);
+          scan.candidates.forEach((c, i) => {
+            const who = el("td", c.name);
+            who.appendChild(el("div", [c.code, c.status].filter(Boolean).join(" · "), "small"));
+            const tr = el("tr");
+            tr.append(el("td", String(i + 1)), who, el("td", String(c.score)), el("td", c.matchedSkills.join(", ") || "none"),
+              el("td", screened[c.code] || "not screened"));
+            table.appendChild(tr);
+          });
+          const wrap = el("div", undefined, "tbl");
+          wrap.appendChild(table);
+          box.appendChild(wrap);
+        }
+        if (job.screening) box.appendChild(el("p", job.screening.message, "reason"));
+      }
+      traceBlock(box, r.trace);
+      return box;
+    }
+
     function resultView(r, file) {
+      if (r.kind) return jobView(r);
       const box = el("div");
       const labels = { accepted: "Accepted as a resume", junk: "Junk: discarded", needs_review: "Needs recruiter review" };
       box.append(badge(labels[r.decision] || r.decision, r.decision), el("p", r.reason, "reason"));

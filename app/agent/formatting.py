@@ -99,3 +99,50 @@ def status_of(intake: Intake) -> dict:
     elif not roles:
         out["next"] = "match_roles(file_id) shows the best matching open roles"
     return out
+
+
+# ---------- job descriptions ----------
+
+def job_for_agent(result: dict) -> dict:
+    """Trims the JD intake's result (app/job_pipeline.py) to what the agent needs."""
+    if not result["ok"]:
+        return {"ok": False, "kind": "job_description", "decision": "error", "file": result.get("file"),
+                "error": result["error"], "job_created": False}
+    kind = result.get("kind")
+    if kind in ("junk", "unclear"):
+        return {"ok": True, "kind": kind, "decision": result["decision"], "file": result.get("file"),
+                "reason": result.get("reason"), "job_created": False}
+    job = result.get("job") or {}
+    return {"ok": True, "kind": "job_description", "file": result.get("file"), "decision": "job_description",
+            **job_view(job), "trace_id": (result.get("trace") or {}).get("trace_id")}
+
+
+def job_view(job: dict) -> dict:
+    """Where a JD's job stands: the job itself, what is missing, and (once created) the candidates screened."""
+    scan = job.get("candidates") or {}
+    screening = job.get("screening") or {}
+    by_code = {r["candidate"]: r["status"] for r in screening.get("results") or []}
+    out = {"job_created": job.get("status") == "created", "job_status": job.get("status"), "job_message": job.get("message"),
+           "job_id": job.get("job_id"), "job": job.get("preview"), "adjusted": job.get("adjusted") or [],
+           "missing_items": job.get("missing_items") or [], "duplicates": job.get("duplicates") or []}
+    if job.get("status") == "created":
+        out.update(questlight_matching=(job.get("questlight_matching") or {}).get("message"),
+                   candidates_status=scan.get("status"), candidates_message=scan.get("message"),
+                   top_candidates=[{"name": c["name"], "candidate_id": c["code"], "score": c["score"], "status": c["status"],
+                                    "experience": c["experience"], "matched_skills": c["matchedSkills"][:8],
+                                    "missing_skills": c["missingSkills"][:8], "screening": by_code.get(c["code"])}
+                                   for c in scan.get("candidates") or []],
+                   screening={"status": screening.get("status"), "message": screening.get("message")})
+        if scan.get("on_job_check"):
+            out["note"] = scan["on_job_check"]
+    return out
+
+
+def job_next_hint(status) -> str | None:
+    if status == "not_created":
+        return "ask the recruiter for each missing item, then provide_job_details(jd_id, answers) and create_job(jd_id)"
+    if status == "duplicate_found":
+        return "show the recruiter the matching open job(s) and ask; only if they say to create it anyway, call create_job(jd_id, allow_duplicate=true)"
+    if status == "failed":
+        return "create_job(jd_id) tries again (check Questlight first if the message says the job may have been created)"
+    return None

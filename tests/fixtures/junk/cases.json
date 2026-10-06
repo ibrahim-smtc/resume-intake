@@ -89,7 +89,7 @@
  },
  {
   "file": "j08_job_ad.pdf",
-  "expected": "junk"
+  "expected": "job_description"
  },
  {
   "file": "j09_meeting_minutes.docx",

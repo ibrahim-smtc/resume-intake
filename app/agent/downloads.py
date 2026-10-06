@@ -1,4 +1,5 @@
-"""Getting the resume the agent points at: a file attached in the page's chat (kept on this server) or an https link."""
+"""Getting the file the agent points at (a resume or a job description): a file attached in the page's chat (kept on this
+server) or an https link."""
 import os
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -7,6 +8,7 @@ import httpx
 
 from app import settings
 from app.agent import chat_bridge
+from app.intake import documents
 
 TIMEOUT_S = 30
 
@@ -43,11 +45,19 @@ async def download(url: str, file_name: str):
 
 def file_name_for(name: str, data: bytes) -> str:
     """Signed storage links often lack the extension, and the pipeline goes by it, so it is added from the content."""
-    name = Path(name or "resume").name
-    if Path(name).suffix.lower() in (".pdf", ".docx"):
+    name = Path(name or "document").name
+    if Path(name).suffix.lower() in chat_bridge.ACCEPTED:
         return name
     if data[:5] == b"%PDF-":
         return name + ".pdf"
     if data[:4] == b"PK\x03\x04" and b"word/document.xml" in data:
         return name + ".docx"
-    return name  # unknown type: the pipeline's intake check rejects it with a clear message
+    if data[:8] == documents.OLE_MAGIC:
+        return name + ".doc"
+    if data and b"\x00" not in data[:4096]:
+        try:
+            data[:4096].decode("utf-8")
+            return name + ".txt"
+        except UnicodeDecodeError:
+            pass
+    return name  # unknown type: the intake check rejects it with a clear message

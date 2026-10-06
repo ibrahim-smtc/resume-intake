@@ -4,8 +4,9 @@ The page posts to /api/chat (app/main.py). This module forwards the message to t
 agent's reply back. Perfox answers an authenticated webhook with the reply in the response body ("response_text"),
 so the page just waits for it; no callback is needed.
 
-The resume never goes to Perfox. It is kept here for 30 minutes under a random private link ("intake-file://<token>"),
-and only the link goes into the message. The agent passes the link to the process_resume tool, and our own MCP server
+The file (a resume or a job description) never goes to Perfox. It is kept here for 30 minutes under a random private link
+("intake-file://<token>"), and only the link goes into the message. The agent passes the link to the process_resume or
+process_job_description tool, and our own MCP server
 (app/agent/downloads.py) opens it with load_file(). Nobody else can: the link only means something inside this process.
 
 Settings: PERFOX_WEBHOOK_URL (the trigger's Full URL, from Studio) and PERFOX_WEBHOOK_SECRET (its Shared Secret).
@@ -23,7 +24,7 @@ import httpx
 from app import settings
 
 SCHEME = "intake-file://"
-TIMEOUT_S = 150  # the agent may call process_resume, which alone takes up to a minute
+TIMEOUT_S = 280  # a JD creates a job and screens candidates in one tool call: Questlight alone can take two minutes for that
 FILE_TTL_S = 30 * 60
 FILE_MAX = 20  # at most 20 files held at once; the oldest goes first
 _LINK_RE = re.compile(re.escape(SCHEME) + r"([0-9a-f]{24})")
@@ -69,9 +70,12 @@ def token_of(text):
     return match.group(1) if match else None
 
 
+ACCEPTED = (".pdf", ".docx", ".txt", ".doc")  # resumes are PDF or DOCX; a job description may also be TXT or DOC
+
+
 def file_problem(name: str, data: bytes):
-    if Path(name).suffix.lower() not in (".pdf", ".docx"):
-        return f"{name}: I can only read PDF or DOCX files."
+    if Path(name).suffix.lower() not in ACCEPTED:
+        return f"{name}: I can only read PDF, DOCX, TXT or DOC files."
     if not data:
         return f"{name} is empty."
     if len(data) > settings.MAX_UPLOAD_BYTES:
@@ -95,7 +99,7 @@ async def send(session_id: str, message: str, file=None) -> dict:
         if problem:
             return {"ok": False, "error": problem}
         link = store_file(name, data)
-        text = (text + "\n\n" if text else "") + f"[Attached resume - file_name: {name}, file_url: {link}]"
+        text = (text + "\n\n" if text else "") + f"[Attached file - file_name: {name}, file_url: {link}]"
     if not text:
         return {"ok": False, "error": "nothing to send"}
 
@@ -110,7 +114,7 @@ async def send(session_id: str, message: str, file=None) -> dict:
         return {"ok": False, "error": f"couldn't reach Perfox ({type(exc).__name__})"}
 
     code = resp.status_code
-    print(f"[chat] webhook -> HTTP {code}{' (with a resume)' if file else ''}")
+    print(f"[chat] webhook -> HTTP {code}{' (with a file)' if file else ''}")
     problems = {
         400: "Perfox refused the message (a required webhook field is missing)",
         401: "Perfox rejected the webhook secret: check PERFOX_WEBHOOK_SECRET against the trigger's Auth Secret",

@@ -140,7 +140,7 @@ add("j06_invoice.pdf", "junk", [
 add("j07_receipt.pdf", "junk", [
     "RECEIPT", "Order number 88231", "Item: wireless mouse   Qty 1   Unit price 899", "Subtotal 899   GST 162   Amount due 1061",
     "Paid by card. Thank you for shopping with us, keep this receipt for returns and warranty claims for up to one year from today."])
-add("j08_job_ad.pdf", "junk", [
+add("j08_job_ad.pdf", "job_description", [
     "We are hiring: Senior Java Developer", "About the role", "What you'll do: design services, review code, mentor juniors.",
     "Who you are: five years of Java, Spring, and cloud experience, with strong communication skills across teams and time zones.",
     "How to apply: apply now by emailing careers@example.com. We are an equal opportunity employer and welcome all applicants."])

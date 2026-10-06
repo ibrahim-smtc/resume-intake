@@ -1,0 +1,30 @@
+[
+ {
+  "file": "d01_jd_structured.pdf",
+  "expected": "job_description"
+ },
+ {
+  "file": "d02_jd_structured.docx",
+  "expected": "job_description"
+ },
+ {
+  "file": "d03_jd_structured.txt",
+  "expected": "job_description"
+ },
+ {
+  "file": "d04_jd_old_word.doc",
+  "expected": "job_description"
+ },
+ {
+  "file": "d05_jd_prose.pdf",
+  "expected": "job_description"
+ },
+ {
+  "file": "d06_jd_short_pasted.txt",
+  "expected": "job_description"
+ },
+ {
+  "file": "d07_jd_with_contact.docx",
+  "expected": "job_description"
+ }
+]

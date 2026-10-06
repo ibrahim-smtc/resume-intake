@@ -1,13 +1,14 @@
 # Perfox recruiter agent: setup
 
 The recruiter talks to a Perfox agent, either in the app's chat page or in Perfox itself. The agent calls this app's MCP
-tools (`POST /mcp`), which run the same pipeline as the upload page. Current setup: a shared Perfox workspace that
-belongs to another client, so use **fake resumes only** (see `tests/fixtures/resumes/`).
+tools (`POST /mcp`), which run the same pipelines as the upload page: a resume becomes a candidate profile, a job description
+(JD) becomes a job. Current setup: a shared Perfox workspace that belongs to another client, so use **fake resumes only**
+(see `tests/fixtures/resumes/`) and invented JDs (`tests/fixtures/jds/`).
 
 ```
  recruiter ── page (/) ──► /api/chat ──► Perfox webhook ──► AI agent ──► /mcp tools ──► pipeline ──► Questlight
                   ▲                                            │
-                  └──────────── reply (response_text) ◄────────┘     the resume itself never goes to Perfox
+                  └──────────── reply (response_text) ◄────────┘     the file itself never goes to Perfox
 ```
 
 ## 1. Where the app is reachable from
@@ -33,11 +34,11 @@ Perfox must be able to open `https://<host>/mcp`. Two ways:
 | URL | `https://<host>/mcp` |
 | Transport | http |
 | Auth type | bearer, and the credential is the `MCP_TOKEN` value from your `.env` (copy it yourself) |
-| Timeout | 120000 ms (one resume takes 10 to 20 s; the 15 s default is too short) |
+| Timeout | 240000 ms (a resume takes 10 to 30 s; a JD up to about 2 minutes, because Questlight writes the job's summary and questions with AI inside its create call. The 15 s default is far too short) |
 | Cache TTL | 0 |
 | Rate limit | 10 per minute is plenty |
 
-After registering, check that **9 tools** were discovered. **Click Rediscover after any change to a tool** (its name, its
+After registering, check that **14 tools** were discovered. **Click Rediscover after any change to a tool** (its name, its
 parameters or its description): Perfox keeps a cached copy.
 
 | Tool | What it does | Writes to Questlight? |
@@ -50,7 +51,10 @@ parameters or its description): Perfox keeps a cached copy.
 | `match_roles` | Step 4: the top 3 open jobs; needs a profile (new, or already existing). For a newly created profile with a strong match it also adds the candidate to those 3 jobs at the Screening stage (retries only failures) | **yes** (new profiles only) |
 | `get_intake_summary` | Counts for the last N days from the audit log | no |
 | `list_recent_intakes` | The latest uploads, newest first | no |
-| `find_candidates_for_job` | Which candidates in Questlight fit an open job best (job ID or title; top 3 by default, max 10). Scores by rules; hired and onboarding candidates are left out. Can't see who is already on the job | no |
+| `process_job_description` | A JD (attached PDF, DOCX, TXT or DOC, or pasted text) in, a Questlight job out: reads it with Questlight's JD parser, checks for the same open job, creates the job, starts Questlight's matching, and screens the best candidates (strong matches only, up to 3) | **yes** (creates a job, adds candidates to it) |
+| `provide_job_details` | Stores what the recruiter typed for what the JD lacked (the client, the salary range, the city...) | no |
+| `create_job` | Creates the job once nothing is missing (or with `allow_duplicate=true` when the recruiter said so), then screens candidates as above | **yes** |
+| `find_candidates_for_job` | Which candidates in Questlight fit an open job best (job ID or title; top 3 by default, max 10). Scores by rules; hired and onboarding candidates, and those already on the job, are left out | no |
 | `add_candidates_to_job` | Puts chosen candidates on a job at the Screening stage (max 10 per call). Refuses hired/onboarding and unknown candidates. Only after the recruiter agrees | **yes** |
 | `list_open_roles` | How many roles are open in Questlight, with a short sample and an optional title search | no |
 
@@ -65,13 +69,19 @@ How they behave:
 - A resume that lacks something Questlight requires (a job title, say) is **not** created: the result lists what is missing,
   the agent asks the recruiter, `provide_missing_details` stores the answer on the server, and `create_profile` then creates
   it. "Go ahead without it" uses `fill_missing=true`. Once a profile exists it can't be edited by these tools.
+- A JD works the same way: what Questlight needs but the JD doesn't say (most often the client and the salary range) is
+  asked for, `provide_job_details` stores it, `create_job` creates the job. There is no "go ahead without it" for a job:
+  Questlight requires those fields. If an open job with the same title, client and city exists, nothing is created until
+  the recruiter says to (`allow_duplicate=true`).
+- Either tool takes either kind of file: a JD dropped on `process_resume` is taken in as a JD, and a resume dropped on
+  `process_job_description` as a resume. A repeated attachment or paste is recognised and not run twice.
 
 ## 3. Build the agent (Build > Agents)
 
 The app's page uses the agent's **Webhook trigger** (section 4). Perfox's own Web Chat trigger is optional and works alongside.
 On the canvas, the trigger goes into the **AI Agent** node, with these sub-nodes:
 
-- **Integration**: questlight-resume-intake, all 11 actions enabled.
+- **Integration**: questlight-resume-intake, all 14 actions enabled.
 - **AI Model**: Creativity 0 to 0.2, Max Reply Length 1024.
 - **Personality**: Name "Quest", Tone Professional, Language English (en-IN), and the system prompt below.
 - **AI Agent** root: Max Steps Per Turn 10; Grounding: Allow General Knowledge OFF, Web Search OFF.
@@ -80,10 +90,13 @@ On the canvas, the trigger goes into the **AI Agent** node, with these sub-nodes
 System prompt (paste it into the Personality node):
 
 ```
-You are {persona_name}, an assistant for Questlight recruiters. You take in candidate resumes and answer questions about intake and open roles, using your tools. You never read, judge, score or match resumes yourself: the tools do all of that.
+You are {persona_name}, an assistant for Questlight recruiters. You take in candidate resumes and job descriptions (JDs) and answer questions about intake, jobs and candidates, using your tools. You never read, judge, score or match resumes or JDs yourself: the tools do all of that.
+
+HOW A FILE IS TAKEN IN
+- A file the recruiter attaches arrives as a line like "[Attached file - file_name: X, file_url: Y]". If the recruiter says it is a JD (or the file name clearly says so), call process_job_description; otherwise call process_resume. Call it ONCE per file with exactly that file_url and file_name. Both tools recognise the other kind of file and handle it, so a wrong guess is safe.
+- If the recruiter pastes a job description into the chat (no file), call process_job_description with the pasted text as text, exactly as written.
 
 HOW A RESUME IS TAKEN IN
-- A resume the recruiter attaches arrives as a line like "[Attached resume - file_name: X, file_url: Y]". Call process_resume ONCE per file with exactly that file_url and file_name.
 - Report only what the tool returned:
   - decision "accepted": candidate name, experience, the profile outcome with the candidate ID, then the top roles with scores, matched and missing skills.
   - decision "junk": say the file was discarded as not a resume, and why. "needs_review": a person must look at it, and why. "error": the error in plain words, then stop.
@@ -100,9 +113,17 @@ WHEN SOMETHING IS MISSING (this is how the profile gets completed)
 - Items with can_supply false (work history, education) cannot be typed in: tell the recruiter the candidate needs to send a resume that shows them.
 - If create_profile or process_resume reports status "failed", you may call create_profile once more with the same file_id, and report the real error if it fails again.
 
+HOW A JOB DESCRIPTION IS TAKEN IN
+- Report only what the tool returned:
+  - job_status "created": the job_id, the job (title, client, location, experience, salary, skills), what was filled in (adjusted), then the candidates screened for it (top_candidates with scores, and screening). If nobody was screened, say why (screening.message).
+  - job_status "not_created": Questlight needs details the JD lacks. Ask for each item in missing_items (use its "what"), then call provide_job_details with the jd_id and the answers (ids from missing_items), then create_job with the jd_id. Use ONLY what the recruiter said. If an answer is rejected (an unknown client, say), show the recruiter the list the tool gave and ask again.
+  - job_status "duplicate_found": tell the recruiter which open job(s) look the same (duplicates) and ask. Only if they clearly say to create it anyway, call create_job with the jd_id and allow_duplicate true.
+  - job_status "failed": say so with the message. kind "junk" or "unclear": it is not a JD, say why.
+- kind "resume" from process_job_description means it was a resume: report it as a resume.
+
 CANDIDATES FOR A JOB
 - "Which candidates fit <job id or title>", "top 5 for QA": call find_candidates_for_job with the job (and top_k if they say a number). If it returns needs_choice, list those jobs and ask which one, then call again with the job_id.
-- Report each candidate's name, candidate_id, score out of 100, and matched and missing skills, as returned. Under 40 means no strong candidate. Always add that Questlight can't show who is already on that job.
+- Report each candidate's name, candidate_id, score out of 100, and matched and missing skills, as returned. Under 40 means no strong candidate. People already on that job are left out by the tool.
 - NEVER add anyone to a job on your own. Ask "Shall I add them to this job's Screening stage?" and only after a clear yes call add_candidates_to_job with exactly the candidate_ids they chose. Report each result (screened, already, failed, refused, not_found).
 
 OTHER QUESTIONS
@@ -112,19 +133,20 @@ OTHER QUESTIONS
 ALWAYS
 - Keep replies short: a few lines per resume, scores as numbers out of 100.
 - Never make up candidate details, scores, job titles, ids or counts that the tools did not return.
-- Never call process_resume twice for the same file.
-- Stay on resume intake, its profiles, open roles and finding candidates for a job; politely decline anything else.
+- Never call process_resume or process_job_description twice for the same file or text.
+- Stay on resume and JD intake, profiles, jobs, open roles and finding candidates for a job; politely decline anything else.
 ```
 
 Optional extra line for robustness: "If you no longer have a file_id, pass the attachment's file_url instead." (The tool descriptions already say it.)
 
-Greeting: "Hi, I'm {persona_name}. Drop a candidate's resume (PDF or DOCX) here and I'll screen it, create the Questlight profile and match it to open roles."
+Greeting: "Hi, I'm {persona_name}. Drop a candidate's resume or a job description here (or paste the JD) and I'll put it into Questlight: a profile matched to open roles, or a job screened with the best candidates."
 
 ## 4. Connect the page's text box (Webhook trigger)
 
 The page posts to this app's `/api/chat`, which forwards the message to the agent's webhook with a secret and returns the agent's
-reply (an authenticated webhook answers with `response_text`). The resume stays on this server: the message only carries a
-private `intake-file://...` link that the MCP server opens.
+reply (an authenticated webhook answers with `response_text`). The file stays on this server: the message only carries a
+private `intake-file://...` link that the MCP server opens. The page waits up to 280 s for the reply (a JD can take two
+minutes); on Vercel the function limit is 300 s.
 
 In Studio, on the agent canvas, add a **Webhook** trigger, wire it into the AI Agent node, and set:
 
@@ -157,7 +179,10 @@ The Auth Secret is shown in plain text by Perfox's API, so treat it as shown: ge
 2. Ask "how many roles are open?" (read-only, checks the whole chain).
 3. Attach a FAKE resume, e.g. `tests/fixtures/resumes/Ananya_Krishnan_Linux_DevOps.pdf`. This creates a **real** profile in the Questlight
    dev tenant (or reports a duplicate if that email is already there).
-4. `/log` and `/trace` show the run with the channel "perfox agent".
+4. Attach an invented JD, e.g. `tests/fixtures/jds/files/d01_jd_structured.pdf`, or paste one. This creates a **real** job in the
+   Questlight dev tenant (it may also be synced to Spotlight, Questlight's referral platform) and screens real dev candidates
+   onto it when they are a strong match. Give test jobs an obvious title (e.g. start it with TEST) so they are easy to close.
+5. `/log` and `/trace` show the run with the channel "perfox agent".
 
 ## Keeping it working
 

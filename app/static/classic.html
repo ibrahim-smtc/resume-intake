@@ -43,7 +43,7 @@
 </head>
 <body>
   <main id="main">
-    <input id="picker" type="file" accept=".pdf,.docx" hidden>
+    <input id="picker" type="file" accept=".pdf,.docx,.txt,.doc" hidden>
     <button id="pick" type="button">Upload resume</button>
     <div id="status" aria-live="polite"></div>
     <div id="result"></div>
@@ -112,6 +112,15 @@
       if (!r.ok) {
         status.className = "error";
         status.textContent = `${file.name}: ${r.error}`;
+        showTrace(r.trace);
+      } else if (r.kind) {   // a job description: this page only says what happened (the chat page shows the details)
+        status.textContent = `Done: ${file.name}`;
+        const job = r.job || {};
+        const badge = el("div", r.kind === "job_description" ? "Job description" : r.kind === "junk" ? "Junk: discarded" : "Needs recruiter review");
+        badge.className = "badge " + (r.kind === "job_description" ? "accepted" : r.kind === "junk" ? "junk" : "needs_review");
+        result.appendChild(badge);
+        result.appendChild(el("p", job.message ? job.message + (job.job_id ? " (" + job.job_id + ")" : "") : r.reason)).className = "reason";
+        if (job.screening) result.appendChild(el("p", job.screening.message)).className = "reason";
         showTrace(r.trace);
       } else {
         status.textContent = `Done: ${file.name}`;

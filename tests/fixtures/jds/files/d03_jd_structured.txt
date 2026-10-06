@@ -1,0 +1,21 @@
+Job Title: Senior QA Automation Engineer
+Company: Northwind Test Labs
+Location: Bengaluru, Karnataka, India (Hybrid)
+Experience: 4 to 8 years
+Employment type: Full-time   Openings: 2   Notice period: 1 month
+Salary: 12 - 18 LPA
+
+ABOUT THE ROLE
+We are looking for a QA Automation Engineer to build and maintain automated test suites for our web and API products.
+
+RESPONSIBILITIES
+- Design and maintain UI test automation with Selenium WebDriver and Java
+- Build API test suites with REST Assured and Postman
+- Integrate tests into Jenkins CI pipelines
+- Report defects in JIRA and work with developers on fixes
+
+REQUIREMENTS
+- 4+ years in software testing, 3+ in automation
+- Strong Java, Selenium, TestNG, REST Assured
+- Good to have: Cypress, Playwright, performance testing with JMeter
+- B.E./B.Tech in Computer Science or equivalent

@@ -57,7 +57,7 @@ upload("j06_invoice.pdf")                                         # junk
 upload("c01_cover_letter.pdf")                                    # needs_review
 upload("s01_scanned.pdf")                                         # needs_review
 upload("x", data=b"", name="empty.pdf")                           # error at intake
-upload("x", data=b"hello", name="notes.txt")                      # error at intake
+upload("x", data=b"hello", name="photo.png")                      # error at intake
 upload("x", data=b"%PDF-1.4 broken", name="corrupt.pdf")          # error at junk_check
 
 data = client.get("/api/log").json()
@@ -76,7 +76,8 @@ check("every row is stamped with its channel", {r["channel"] for r in rows} == {
 
 # privacy: nothing about the candidate in the database file
 raw = "\n".join(sqlite3.connect(os.environ["AUDIT_DB"]).iterdump())
-leaks = [w for w in ("priya.nair", "98765", "Java", "Python", "Bengaluru", "Anna University", "Acme") if w in raw]
+# the whole phone number: a fragment like "98765" also turns up by chance inside the random hex ids
+leaks = [w for w in ("priya.nair", "98765 43210", "Java", "Python", "Bengaluru", "Anna University", "Acme") if w in raw]
 check(f"no candidate data in the database file (found: {leaks})", not leaks)
 check("the log page is served", client.get("/log").status_code == 200)
 
