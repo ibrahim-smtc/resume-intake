@@ -63,7 +63,7 @@ class Run:
         self.file_hash = hashlib.sha256(data).hexdigest() if data else None
         self.channel = channel
 
-    def log(self, step: str, decision: str, reason: str = "", record_id: str = None, **details) -> None:
+    def log(self, step: str, decision: str, reason: str = "", record_id: str | None = None, **details) -> None:
         # A broken log must not stop intake, but it must be loud: a silent gap would make the reports wrong.
         try:
             conn = _connect()
@@ -92,7 +92,7 @@ def recent(limit: int = 200) -> list:
     return out
 
 
-def summary(since: str = None) -> dict:
+def summary(since: str | None = None) -> dict:
     """Counts per step and decision, e.g. {"junk_check": {"junk": 3, "accepted": 10, "needs_review": 1}}.
     since: an ISO 8601 UTC timestamp; only rows at or after it are counted."""
     conn = _connect()
@@ -110,7 +110,7 @@ JOB_STEPS = ("find_candidates", "add_to_screening")
 _NOT_JOB = "step NOT IN ('find_candidates', 'add_to_screening')"
 
 
-def run_count(since: str = None) -> int:
+def run_count(since: str | None = None) -> int:
     """How many files came in (one run per file)."""
     conn = _connect()
     n = conn.execute(f"SELECT COUNT(DISTINCT run_id) FROM audit_log WHERE ts >= ? AND {_NOT_JOB}", (since or "",)).fetchone()[0]

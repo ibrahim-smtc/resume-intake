@@ -47,6 +47,11 @@ async def screen():
     return JSONResponse({"data": {}}, 201)
 
 
+@mock.post("/api/applicants/change-status")
+async def change_status():
+    return JSONResponse({"data": {}}, 200)
+
+
 @mock.get("/api/jobs/all")
 async def jobs_all():
     mock_state["jobs_calls"] += 1
@@ -77,7 +82,8 @@ t = r["trace"]
 spans = {s["name"]: s for s in t["spans"]}
 expected = ["resume intake", "intake checks", "junk check", "parse resume", "load into Questlight", "POST create-applicant",
             "match open roles", "fetch open jobs", "score jobs", "screen top roles",
-            "POST applicantMatching/create", "POST applicantMatching/create", "POST applicantMatching/create"]
+            "POST applicantMatching/create", "POST applicants/change-status",   # the new candidate's status goes to SCREENING once
+            "POST applicantMatching/create", "POST applicantMatching/create"]
 check("steps in the right order", [s["name"] for s in t["spans"]] == expected, [s["name"] for s in t["spans"]])
 root = t["spans"][0]
 check("children hang under the right parents",
@@ -115,7 +121,7 @@ check("junk file: only the intake and junk steps, 0 tokens",
 rc = upload("x", data=b"%PDF-1.4 broken", name="corrupt.pdf")
 sc = {s["name"]: s for s in rc["trace"]["spans"]}
 check("corrupt PDF: the junk check step and the root are marked error", sc["junk check"]["status"] == "error" and rc["trace"]["spans"][0]["status"] == "error")
-rt = upload("x", data=b"hello", name="notes.txt")
+rt = upload("x", data=b"hello", name="photo.png")
 check("wrong type: the intake checks step is marked error", {s["name"]: s for s in rt["trace"]["spans"]}["intake checks"]["status"] == "error")
 mock_state["perfox_status"] = 500
 rp = upload("r01_standard.pdf")

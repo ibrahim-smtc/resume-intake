@@ -29,6 +29,17 @@ TOOL_GUIDE: list[GuideGroup] = [
                  "Answer in the chat and I complete the profile. Say \"go ahead without it\" to save it as \"Not specified\".",
          "try": "Update Candidate DOB: 13/06/2003"},
     ]},
+    {"group": "Job descriptions", "items": [
+        {"title": "Create a job from a JD", "tools": ["process_job_description"], "writes": True,
+         "does": "Drop a JD (PDF, DOCX, TXT or DOC) or paste its text. I read it, create the job in Questlight, start "
+                 "Questlight's matching, and put the best 3 candidates already in Questlight on it at the Screening stage. "
+                 "If the same job is already open, I ask before creating another.",
+         "try": "Drop the JD and press Enter  /  Paste the JD and say: create this job"},
+        {"title": "Fill in missing job details", "tools": ["provide_job_details", "create_job"], "writes": True,
+         "does": "If the JD doesn't say something Questlight needs (the client, the salary range, the city...), I ask. "
+                 "Answer in the chat and I create the job.",
+         "try": "Client is ICICI Bank, salary 12-18 LPA"},
+    ]},
     {"group": "Candidates for a job", "items": [
         {"title": "Who fits this job?", "tools": ["find_candidates_for_job"], "writes": False,
          "does": "Give me an open job (its ID or title) and I rank the candidates already in Questlight for it and show "

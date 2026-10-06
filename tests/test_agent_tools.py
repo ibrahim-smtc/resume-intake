@@ -41,7 +41,9 @@ def remote(status=200, body=PDF):
 
 check("a file name without an extension gets one from the file's content",
       downloads.file_name_for("abc123", b"%PDF-1.4 x") == "abc123.pdf" and downloads.file_name_for("x", b"PK\x03\x04 word/document.xml") == "x.docx"
-      and downloads.file_name_for("x.pdf", b"anything") == "x.pdf" and downloads.file_name_for("x", b"hello") == "x")
+      and downloads.file_name_for("x.pdf", b"anything") == "x.pdf" and downloads.file_name_for("x", b"hello") == "x.txt"
+      and downloads.file_name_for("x", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1 old word") == "x.doc"
+      and downloads.file_name_for("x", b"\x00\x01\x02 binary") == "x")
 check("only https links are fetched", asyncio.run(fetch("http://a.com/x.pdf"))[2] == "file_url must be an https link to the uploaded file"
       and "https" in asyncio.run(fetch("file:///C:/Windows/win.ini"))[2])
 os.environ["MCP_FILE_HOSTS"] = "perfox.ai"
@@ -115,9 +117,10 @@ async def main():
 
 o = asyncio.run(main())
 tools = o["tools"]
-check("the agent sees the 11 tools", set(tools) == {"process_resume", "check_junk", "parse_resume", "provide_missing_details", "create_profile",
+check("the agent sees the 14 tools", set(tools) == {"process_resume", "check_junk", "parse_resume", "provide_missing_details", "create_profile",
                                                    "match_roles", "list_open_roles", "get_intake_summary", "list_recent_intakes",
-                                                   "find_candidates_for_job", "add_candidates_to_job"}, sorted(tools))
+                                                   "find_candidates_for_job", "add_candidates_to_job",
+                                                   "process_job_description", "provide_job_details", "create_job"}, sorted(tools))
 check("process_resume's schema needs a file_url", tools["process_resume"].inputSchema.get("required") == ["file_url"])
 check("tool descriptions don't promise a fixed file size", "5 MB" not in tools["process_resume"].description and "5 MB" not in tools["check_junk"].description)
 

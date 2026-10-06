@@ -281,10 +281,16 @@ async def create_profile(applicant: dict, name: str, data: bytes, ext: str) -> d
     return result
 
 
-async def add_to_screening(applicant_id: str, job_id: str) -> dict:
-    """Puts a candidate on a job at the SCREENING stage (status ONGOING): POST /jobs/applicantMatching/create. Both IDs are
-    the long UUIDs (the `_id` fields), not the readable CAN-... / JOB-... codes.
-    Returns {"status": screened | already | skipped | failed, "message"}."""
+# A candidate whose overall status is one of these gets SCREENING once added to a job, as Questlight's own "add to
+# pipeline" does. Anyone further along (submitted to a client, interviewing...) keeps their status: it is never lowered.
+RAISE_TO_SCREENING = {"", "NEW_CANDIDATE"}
+
+
+async def add_to_screening(applicant_id: str, job_id: str, current_status: str = "NEW_CANDIDATE") -> dict:
+    """Puts a candidate on a job at the SCREENING stage (status ONGOING), the way Questlight's UI does: POST
+    /jobs/applicantMatching/create, then POST /applicants/change-status for a new candidate. Both IDs are the long UUIDs
+    (the `_id` fields), not the readable CAN-... / JOB-... codes.
+    Returns {"status": screened | already | skipped | failed, "message", "status_updated"}."""
     headers = auth_headers()
     if not headers:
         return {"status": "skipped", "message": "QUESTLIGHT_TOKEN is not set"}
@@ -294,7 +300,27 @@ async def add_to_screening(applicant_id: str, job_id: str) -> dict:
         s.set(outcome=result["status"])
         if result["status"] == "failed":
             s.fail(result["message"])
+    if result["status"] == "screened" and (current_status or "") in RAISE_TO_SCREENING:
+        result["status_updated"] = await _set_status(headers, applicant_id, "SCREENING")
     return result
+
+
+async def _set_status(headers: dict, applicant_id: str, status: str) -> bool:
+    """POST /applicants/change-status. Failing here doesn't undo the screening, so it only reports whether it worked."""
+    with tracing.span("POST applicants/change-status") as s:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_S)) as client:
+                resp = await client.post(f"{api_base()}/applicants/change-status", headers=headers,
+                                         json={"applicant_id": applicant_id, "status": status,
+                                               "remarks": "Added to screening by the resume intake assistant"})
+        except httpx.HTTPError as exc:
+            s.fail(type(exc).__name__)
+            return False
+        s.set(http_status=resp.status_code)
+        if resp.status_code not in (200, 201):
+            s.fail(f"HTTP {resp.status_code}")
+            return False
+        return True
 
 
 async def _send_screening(headers: dict, body: dict) -> dict:
@@ -309,13 +335,18 @@ async def _send_screening(headers: dict, body: dict) -> dict:
     tracing.current().set(http_status=code)
     if code in (200, 201):
         return {"status": "screened", "message": "added to the job at the Screening stage"}
-    if code == 409:
+    problem = _problem(resp)
+    # "Applicant has already been mapped for this job" comes as a 400; a leftover scorecard for the pair as a 409.
+    if code == 409 or (code == 400 and "already" in problem.lower()):
         return {"status": "already", "message": "the candidate is already on this job"}
+    if code == 422:
+        return {"status": "failed", "message": "Questlight can't screen for this job yet: it has no screening questions at this "
+                "candidate's experience level (Questlight 422)"}
     if code == 401:
         return {"status": "failed", "message": "Questlight rejected the token (tokens last 10 days): get a new one and update QUESTLIGHT_TOKEN"}
     if code == 403:
         return {"status": "failed", "message": "Questlight refused: the account may not add candidates to jobs, or this app's origin isn't allowed (try QUESTLIGHT_ORIGIN)"}
-    return {"status": "failed", "message": f"Questlight returned HTTP {code}: {_problem(resp)}"}
+    return {"status": "failed", "message": f"Questlight returned HTTP {code}: {problem}"}
 
 
 async def _send_profile(headers: dict, parts: list) -> dict:

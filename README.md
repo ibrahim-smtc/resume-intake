@@ -3,17 +3,26 @@
 An AI resume intake agent for **Questlight** (a multi-tenant ATS). A recruiter drops in a resume; the app screens out files that
 aren't resumes, reads it, creates the candidate's profile in Questlight, shows the best matching open roles and puts the
 candidate on the best 3 of them at the Screening stage. If the resume
-lacks something Questlight requires (a job title, say), it asks, and the recruiter's answer completes the profile. Recruiters
-use it through a chat page, or through a **Perfox** agent that calls the same code as tools.
+lacks something Questlight requires (a job title, say), it asks, and the recruiter's answer completes the profile.
 
-AI is used **only to read the resume**. Everything else (junk rules, the profile mapping, job matching, the audit log) is plain,
-hardcoded code.
+It also takes **job descriptions** (PDF, DOCX, TXT, old Word DOC, or text pasted into the chat): the JD is read, the job is
+created in Questlight, Questlight's own matching is started, and the best candidates already in Questlight (strong matches
+only, up to 3) are put on the new job at the Screening stage. What a JD doesn't say but Questlight needs (the client, the
+salary range...) is asked for. Recruiters use it through a chat page, or through a **Perfox** agent that calls the same code
+as tools.
+
+AI is used **only to read the resume or the JD** (Questlight's parsers). Everything else (junk and JD rules, the profile and
+job mapping, matching, the audit log) is plain, hardcoded code.
 
 ```
  resume ─► intake checks ─► "Junk?" ─► parse ─► load into Questlight ─► match open roles ─► screen top 3
               (size, type)   (rules,    (AI)     (profile created,       (own scoring,        (added to each job
                               no AI)             or: what is missing)     no AI)               at Screening, no AI)
                        every step is written to the audit log and traced
+
+ JD ─► intake checks ─► "What is it?" ─► parse JD ─► duplicate? ─► create the job ─► Questlight's matching ─► screen the best
+        (PDF, DOCX,      (rules: a JD,    (AI,        (Questlight   (or: what is       (started, as its       (own ranking of the
+         TXT, DOC, text)  a resume, junk)  Questlight)  check)        missing, to ask)   own UI does)           candidates, 40+ only)
 ```
 
 ## Layout
@@ -23,10 +32,12 @@ app/
   main.py            the web app: pages, JSON APIs, and POST /mcp   (Vercel's entrypoint)
   settings.py        every setting, from environment variables / .env
   security.py        who may reach what (password for the pages, bearer token for /mcp)
-  pipeline.py        runs the steps in order: the BRD workflow
+  pipeline.py        runs the resume steps in order: the BRD workflow
+  job_pipeline.py    runs the JD steps in order: a JD in, a Questlight job out, screened with the best candidates
   intake/            the workflow blocks
-    documents.py       read text out of a PDF or DOCX
-    junk.py            "Junk?" rules
+    documents.py       read text out of a PDF, DOCX, TXT or old Word DOC
+    junk.py            "Junk?" rules, and telling a JD from a resume
+    jobs.py            read a JD (Questlight's JD parser), build the Questlight job, create it
     parser_questlight.py, parser_perfox.py     the two resume parsers (switch: RESUME_PARSER)
     questlight.py      fit a parsed resume to Questlight's rules, create the profile
     corrections.py     details a recruiter supplies for what a resume lacked
@@ -34,7 +45,7 @@ app/
     candidates.py      the other direction: rank the candidates already in Questlight for a job
   agent/             the Perfox agent integration
     mcp_app.py         the MCP server and its token-checked /mcp endpoint
-    tools.py           the 11 tools the agent can call
+    tools.py           the 14 tools the agent can call
     intakes.py         the agent's short-term memory of the files it has taken in
     chat_bridge.py     the page's text box -> the agent's webhook
     formatting.py, downloads.py, tool_guide.py
@@ -113,6 +124,9 @@ Vercel's documentation for FastAPI and Python functions.
   database.
 - **Uploads are limited to 4 MB** (a Vercel function can't receive more than 4.5 MB), so the limit there is 4 MB by default
   (`MAX_UPLOAD_MB`).
+- **A JD is one long tool call.** Questlight writes the job's summary and screening questions with AI inside its create call, so
+  a JD can take a minute or two end to end. That fits the 300 s function limit, but the Perfox integration's timeout must be
+  raised (240000 ms, see docs/perfox-agent-setup.md) or Perfox gives up before the answer comes.
 - **Questlight's token expires every 10 days.** Update `QUESTLIGHT_TOKEN` and redeploy (environment changes only apply to new
   deployments). A service account or API key from the Questlight team would remove this chore.
 - **Vercel's own "Deployment Protection"** (if switched on for the project) would block Perfox from calling `/mcp`. Use this app's

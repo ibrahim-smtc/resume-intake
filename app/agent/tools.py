@@ -10,6 +10,9 @@
   just one step. The server keeps the file and the parsed resume between calls (see intakes.py), and the rules are
   checked here whatever order the agent calls them in: nothing is parsed unless the junk check accepted the file, no
   profile is created unless the parsed resume has every required detail, and matching needs a profile.
+- process_job_description: a job description (attached, or pasted as text) in, a Questlight job out, screened with the
+  best candidates (app/job_pipeline.py). provide_job_details and create_job finish a JD that lacked something.
+  process_resume and process_job_description each hand over to the other when a file turns out to be the other kind.
 - find_candidates_for_job, add_candidates_to_job: the other direction. For an open job, rank the candidates already in
   Questlight (read-only); then, once the recruiter agrees, put chosen ones on the job at the Screening stage.
 - get_intake_summary, list_recent_intakes: read the audit log. list_open_roles: Questlight's open jobs.
@@ -21,10 +24,10 @@ import contextlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from app import pipeline, settings
+from app import job_pipeline, pipeline, settings
 from app.agent import chat_bridge, downloads, formatting, intakes
 from app.agent.mcp_app import mcp
-from app.intake import candidates, corrections, matching, questlight
+from app.intake import candidates, corrections, jobs, matching, questlight
 from app.observability import audit, tracing
 
 CHANNEL = "perfox agent"  # the audit log's channel column for files that came in through the agent
@@ -48,7 +51,9 @@ def _upload_token(file_url: str):
 
 @mcp.tool()
 async def process_resume(file_url: str, file_name: str = "") -> dict:
-    """Process ONE candidate resume the recruiter has shared (PDF or DOCX). USE THIS BY DEFAULT.
+    """Process ONE candidate resume the recruiter has shared (PDF or DOCX). USE THIS BY DEFAULT for an attached file.
+    If the file turns out to be a job description, the JD intake runs instead and the result has kind "job_description"
+    (report it as described under process_job_description).
 
     Pass the URL of the uploaded file exactly as received (the attachment URL), and its file name if known.
     This runs the whole intake in a fixed order: junk check, resume parsing, creating the candidate profile in
@@ -80,12 +85,20 @@ async def process_resume(file_url: str, file_name: str = "") -> dict:
     token = _upload_token(file_url)
     earlier = intakes.find(file_url) if token else None
     if earlier and earlier.parse_done:  # already processed in this chat: say where it stands, don't run it again
-        return formatting.status_of(earlier)
+        return _where_it_stands(earlier)
     data, name, err = await downloads.download(file_url, file_name)
     if err:
         return {"ok": False, "decision": "error", "error": err, "profile_created": False}
+    return await _take_resume(name, data, token)
+
+
+async def _take_resume(name: str, data: bytes, token) -> dict:
+    """The resume intake for a downloaded file. A file that turns out to be a job description goes to the JD intake
+    instead (pipeline.process_file does that), and the answer is the JD's."""
     state = {}
     result = await pipeline.process_file(name, data, CHANNEL, state)
+    if result.get("kind"):  # it was a job description: the JD intake ran
+        return _jd_answer(state, name, data, result, token)
     out = formatting.for_agent(result)
     intake = intakes.keep_for_follow_up(state, name, data, result, token)
     if intake:  # the same file can now be followed up: supply what is missing, retry, match roles
@@ -94,6 +107,38 @@ async def process_resume(file_url: str, file_name: str = "") -> dict:
         if hint:
             out["next"] = hint
     return out
+
+
+def _jd_answer(state: dict, name: str, data: bytes, result: dict, token) -> dict:
+    out = formatting.job_for_agent(result)
+    intake = intakes.keep_jd_for_follow_up(state, name, data, result, token)
+    if intake:
+        out["jd_id"] = intake.id
+        hint = formatting.job_next_hint(out.get("job_status"))
+        if hint:
+            out["next"] = hint
+    return out
+
+
+def _where_it_stands(intake: intakes.Intake) -> dict:
+    """The answer for a file (or pasted JD) already taken in during this chat: nothing is run again."""
+    if intake.kind == "jd":
+        out = {"ok": True, "kind": "job_description", "file": intake.name, "decision": "job_description", "jd_id": intake.id,
+               "reason": "this job description was already taken in during this chat, so nothing was run again",
+               **formatting.job_view(intake.job or {"status": "not_created", "preview": job_pipeline.preview(intake.details or {})})}
+        hint = formatting.job_next_hint(out.get("job_status"))
+        if hint:
+            out["next"] = hint
+        return out
+    return formatting.status_of(intake)
+
+
+def _resume_intake(ref: str):
+    """(intake, error) for the resume step tools: a job description's reference is refused with what to use instead."""
+    intake, err = intakes.lookup(ref)
+    if intake and intake.kind == "jd":
+        return None, "that reference is a job description, not a resume: use provide_job_details or create_job with it"
+    return intake, err
 
 
 @mcp.tool()
@@ -133,8 +178,8 @@ async def parse_resume(file_id: str) -> dict:
     file_url instead. Uses the configured resume parser (an AI call, about 6-15 seconds). Reports
     info_complete and the missing fields. Nothing is written to Questlight yet. Safe to repeat: the second call
     returns the saved result without parsing again."""
-    intake, err = intakes.lookup(file_id)
-    if err:
+    intake, err = _resume_intake(file_id)
+    if err or intake is None:
         return {"ok": False, "error": err}
     async with _traced(intake.run, "parse_resume") as trace:
         if not intake.parse_done:
@@ -166,8 +211,8 @@ async def provide_missing_details(file_id: str, answers: list[dict[str, str]]) -
     degree:N, institution:N (N = the entry's number as given in missing_items), and name, email, phone, address or
     skills (a comma-separated list). Use ONLY ids from missing_items and only values the recruiter actually said:
     never guess a value. Returns what is still missing."""
-    intake, err = intakes.lookup(file_id)
-    if err:
+    intake, err = _resume_intake(file_id)
+    if err or intake is None:
         return {"ok": False, "error": err}
     if not intake.parse_done:
         return {"ok": False, "file_id": intake.id, "error": "this file has not been parsed yet: call parse_resume first"}
@@ -203,8 +248,8 @@ async def create_profile(file_id: str, fill_missing: bool = False) -> dict:
     status: "created" (see candidate_id), "duplicate" (a profile with this email exists, nothing changed),
     "not_created" (required info missing, see missing_items), "failed" or "skipped". Safe to repeat: a created or
     duplicate result is returned as saved, never sent to Questlight twice; anything else is tried again."""
-    intake, err = intakes.lookup(file_id)
-    if err:
+    intake, err = _resume_intake(file_id)
+    if err or intake is None:
         return {"ok": False, "error": err}
     if not intake.parse_done:
         return {"ok": False, "file_id": intake.id, "error": "this file has not been parsed yet: call parse_resume first"}
@@ -238,8 +283,8 @@ async def match_roles(file_id: str) -> dict:
     minutes, no profile step needed). The candidate must have been parsed and have a Questlight profile (just created by
     create_profile, or one that already existed: status "duplicate"). Refuses otherwise. THIS WRITES TO QUESTLIGHT only
     for a newly created profile (the Screening step); for an existing profile it is read-only."""
-    intake, err = intakes.lookup(file_id)
-    if err:
+    intake, err = _resume_intake(file_id)
+    if err or intake is None:
         return {"ok": False, "error": err}
     if not intake.profile or intake.profile["status"] not in ("created", "duplicate"):
         return {"ok": False, "file_id": intake.id, "error": "this candidate has no Questlight profile yet: run "
@@ -283,8 +328,8 @@ async def find_candidates_for_job(job: str, top_k: int = 3) -> dict:
     max 10). Candidates already hired or in onboarding are left out. Scoring is by rules (skills, experience, title,
     degree, location), not by you: report the scores as given, 0-100 (under 40 means no strong candidate), with the
     matched and missing skills. The first call takes a few seconds; later ones are quick.
-    LIMIT: Questlight gives no way to see who is already on this job, so tell the recruiter a suggested candidate may
-    already be on it. Do NOT add anyone to the job from here: only after the recruiter says yes to adding them, call
+    Candidates already on this job are left out (already_on_job counts them); if Questlight couldn't say who is on it,
+    note explains. Do NOT add anyone to the job from here: only after the recruiter says yes to adding them, call
     add_candidates_to_job."""
     found, other = await _resolve_job(job)
     if other:
@@ -298,11 +343,12 @@ async def find_candidates_for_job(job: str, top_k: int = 3) -> dict:
         return {"ok": False, "job": _job_line(found), "error": result["message"], "trace_id": trace.id}
     return {"ok": True, "job": _job_line(found), "status": result["status"], "message": result["message"],
             "considered": result["considered"], "left_out_hired_or_onboarding": result["left_out"],
+            "already_on_job": result.get("already_on_job", 0),
             "candidates": [{"name": c["name"], "candidate_id": c["code"], "score": c["score"], "status": c["status"],
                             "location": c["location"], "experience": c["experience"],
                             "matched_skills": c["matchedSkills"][:8], "missing_skills": c["missingSkills"][:8]}
                            for c in result["candidates"]],
-            "note": "Questlight can't show who is already on this job, so a suggested candidate may already be on it.",
+            "note": result.get("on_job_check"),
             "next": "to put them on this job at the Screening stage, ask the recruiter first, then add_candidates_to_job",
             "trace_id": trace.id}
 
@@ -339,6 +385,127 @@ async def add_candidates_to_job(job: str, candidate_ids: list[str]) -> dict:
     return {"ok": True, "job": _job_line(found), "status": status, "results": results, "trace_id": trace.id}
 
 
+# ---------- job descriptions: a JD in, a Questlight job out ----------
+
+@mcp.tool()
+async def process_job_description(file_url: str = "", file_name: str = "", text: str = "") -> dict:
+    """Take in ONE job description (JD) and create the job in Questlight. THIS WRITES TO QUESTLIGHT.
+
+    Pass EITHER the attached file (file_url exactly as received, and file_name if known; PDF, DOCX, TXT or DOC) OR, when
+    the recruiter pasted the JD into the chat, the JD's text as `text` (copy it exactly, don't summarise). It runs in a
+    fixed order: checks it is a JD, reads it with Questlight's JD parser, checks Questlight for the same job already open,
+    creates the job (status Active), starts Questlight's own matching, then ranks the candidates already in Questlight and
+    puts the best 3 on the new job at the Screening stage. A file that turns out to be a resume is taken in as a resume
+    instead (kind "resume": report it like process_resume's result). Calling it again for the same attachment or text does
+    NOT run it again: it returns where the job stands, with the jd_id.
+
+    - job_status "created": report job_id, the job (title, client, location, experience, salary, skills), adjusted (what
+      was filled in, e.g. the business head or openings: tell the recruiter), then top_candidates with scores and whether
+      each was screened (screening).
+    - job_status "not_created": Questlight needs details the JD lacks (missing_items, e.g. the client or the salary
+      range). ASK the recruiter for each, then provide_job_details(jd_id, answers), then create_job(jd_id).
+    - job_status "duplicate_found": an open job with the same title, client and city exists (duplicates). Tell the
+      recruiter and ask; only if they say to create it anyway, call create_job(jd_id, allow_duplicate=true).
+    - kind "junk" or "unclear": not a JD (reason says why); nothing was created."""
+    text = (text or "").strip()
+    if not file_url and not text:
+        return {"ok": False, "error": "pass the attached file's file_url, or the pasted JD as text"}
+    if file_url:
+        token = _upload_token(file_url)
+        earlier = intakes.find(file_url) if token else None
+        if earlier and earlier.parse_done:
+            return _where_it_stands(earlier)
+        data, name, err = await downloads.download(file_url, file_name)
+        if err:
+            return {"ok": False, "decision": "error", "error": err, "job_created": False}
+        if not token:  # an ordinary https link: the same file sent again is recognised by its content
+            token = intakes.content_token(data)
+            earlier = intakes.find(token)
+            if earlier and earlier.parse_done:
+                return _where_it_stands(earlier)
+        state = {}
+        result = await job_pipeline.process_jd(name, data, channel=CHANNEL, state=state)
+        if result.get("kind") == "resume":  # a resume after all: the resume intake takes it
+            out = await _take_resume(name, data, token)
+            out["kind"] = "resume"
+            return out
+        return _jd_answer(state, name, data, result, token)
+    token = intakes.pasted_token(text)
+    earlier = intakes.find(token)
+    if earlier and earlier.kind == "jd":
+        return _where_it_stands(earlier)
+    state = {}
+    result = await job_pipeline.process_jd(job_pipeline.PASTED, None, text, CHANNEL, state)
+    if result.get("kind") == "resume":
+        return {"ok": False, "kind": "resume", "error": "this text looks like a resume, not a job description: a resume has to be "
+                "attached as a PDF or DOCX file"}
+    return _jd_answer(state, job_pipeline.PASTED, text.encode("utf-8"), result, token)
+
+
+def _jd_intake(ref: str):
+    intake, err = intakes.lookup(ref)
+    if intake and intake.kind != "jd":
+        return None, "that reference is a resume, not a job description: use the resume tools with it"
+    return intake, err
+
+
+@mcp.tool()
+async def provide_job_details(jd_id: str, answers: list[dict[str, str]]) -> dict:
+    """Store details the recruiter supplied for what a job description lacked. Nothing is written to Questlight by this
+    tool: call create_job(jd_id) afterwards.
+
+    jd_id comes from the process_job_description result (if you no longer have it, pass the attachment's file_url). answers
+    is a list of {"id": ..., "value": ...} using the ids from missing_items: title, summary, client (a client name),
+    business_head (a person's name), location ("City" or "City, State"), experience ("4-8"), salary ("12-18 LPA"),
+    skills and skill_domains (comma-separated), industry. Use ONLY values the recruiter actually said: never guess. A
+    client or business head that doesn't match exactly one in Questlight is rejected with the list to choose from: show
+    it to the recruiter. Returns what is still missing."""
+    intake, err = _jd_intake(jd_id)
+    if err or intake is None:
+        return {"ok": False, "error": err}
+    if (intake.job or {}).get("status") == "created":
+        return {"ok": False, "jd_id": intake.id, "error": "the job was already created in Questlight; it can't be edited from here"}
+    details = intake.details or {}
+    applied, rejected = [], []
+    for answer in answers if isinstance(answers, list) else []:
+        key = str(answer.get("id", "")).strip() if isinstance(answer, dict) else ""
+        value = str(answer.get("value", "")) if isinstance(answer, dict) else ""
+        problem = await jobs.apply_answer(details, key, value)
+        (rejected.append(f"{key or '?'}: {problem}") if problem else applied.append(key))
+    intake.details = details
+    if applied:  # ids only, never the values
+        intake.run.log("job_details", "applied", "the recruiter supplied missing job details", fields=applied)
+    checked = jobs.review(details)
+    return {"ok": True, "jd_id": intake.id, "applied": applied, "rejected": rejected, "info_complete": not checked["missing"],
+            "missing_items": checked["items"], "job": job_pipeline.preview(details),
+            "next": "create_job(jd_id)" if not checked["missing"] else "ask the recruiter for what is still missing, then call this again"}
+
+
+@mcp.tool()
+async def create_job(jd_id: str, allow_duplicate: bool = False) -> dict:
+    """Create the job from a job description that was taken in, then screen the best candidates for it, exactly as
+    process_job_description does. THIS WRITES TO QUESTLIGHT.
+
+    Use it after provide_job_details has filled what was missing, or with allow_duplicate=true ONLY when the recruiter
+    said to create the job although a similar one is open. jd_id comes from process_job_description (or pass the
+    attachment's file_url). Refuses (nothing is written) while required details are missing. Safe to repeat: a job that
+    was created is never created twice; the saved result is returned."""
+    intake, err = _jd_intake(jd_id)
+    if err or intake is None:
+        return {"ok": False, "error": err}
+    if (intake.job or {}).get("status") != "created":
+        async with _traced(intake.run, "create_job") as trace:
+            intake.job = await job_pipeline.create_and_scan(intake.run, intake.details or {}, allow_duplicate=allow_duplicate)
+        trace_id = trace.id
+    else:
+        trace_id = None
+    out = {"ok": True, "kind": "job_description", "jd_id": intake.id, **formatting.job_view(intake.job or {}), "trace_id": trace_id}
+    hint = formatting.job_next_hint(out.get("job_status"))
+    if hint:
+        out["next"] = hint
+    return out
+
+
 @mcp.tool()
 async def list_open_roles(search: str = "", limit: int = 10) -> dict:
     """How many job roles are open in Questlight right now, and a sample of them (title, job id, location).
@@ -365,7 +532,8 @@ async def get_intake_summary(days: int = 1) -> dict:
     screening: accepted / junk / needs_review. profiles: created / duplicate / not_created (info missing) / failed.
     matching: ok (a strong match found) / no_strong_match / failed. job_screening: screened / partial / failed / skipped
     (candidates put on their top jobs at the Screening stage). added_to_jobs: how often recruiters added candidates to a
-    job themselves (screened / partial / failed). errors: files that could not be read or parsed.
+    job themselves (screened / partial / failed). job_descriptions: JDs taken in (by decision). jobs: created /
+    not_created (details missing) / duplicate_found / failed. jd_screening: candidates screened for new jobs. errors: files that could not be read or parsed.
     """
     days = max(1, min(int(days), 90))
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
@@ -374,6 +542,8 @@ async def get_intake_summary(days: int = 1) -> dict:
             "screening": counts.get("junk_check", {}), "profiles": counts.get("load_questlight", {}),
             "matching": counts.get("match_roles", {}), "job_screening": counts.get("screen_top_roles", {}),
             "added_to_jobs": counts.get("add_to_screening", {}),
+            "job_descriptions": counts.get("jd_check", {}), "jobs": counts.get("create_job", {}),
+            "jd_screening": counts.get("screen_candidates", {}),
             "errors": {step: n["error"] for step, n in counts.items() if "error" in n}}
 
 
@@ -386,4 +556,5 @@ async def list_recent_intakes(limit: int = 10) -> dict:
                          "screening": r["steps"].get("junk_check", r["steps"].get("intake")),
                          "profile": r["steps"].get("load_questlight"), "matching": r["steps"].get("match_roles"),
                          "job_screening": r["steps"].get("screen_top_roles"),
+                         "job": r["steps"].get("create_job"),
                          "candidate_id": r["record_id"], "note": r["last_reason"]} for r in runs]}

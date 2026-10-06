@@ -17,7 +17,8 @@ from app import settings
 from app.intake import documents, junk, matching, parser_perfox, parser_questlight, questlight
 from app.observability import audit, tracing
 
-ALLOWED_TYPES = (".pdf", ".docx")
+RESUME_TYPES = (".pdf", ".docx")  # what the resume parser reads
+ALLOWED_TYPES = (".pdf", ".docx", ".txt", ".doc")  # what is taken in: a TXT or DOC may turn out to be a JD (app/job_pipeline.py)
 
 # Fields in the parsed JSON that identify or contact the candidate. Questlight's own masked CV removes email, phone and
 # LinkedIn but keeps name and location; this mirrors it.
@@ -39,7 +40,8 @@ def fail(run: audit.Run, step: str, error: str) -> dict:
 
 
 def stopped(name: str, verdict) -> dict:
-    """The junk check ended the run (junk, or sent to the review queue): nothing is parsed."""
+    """The junk check ended the run (junk, a job description, or sent to the review queue): no resume is parsed. A job
+    description is then taken in by app/job_pipeline.py (the callers do that, with the same run)."""
     return {"file": name, "ok": True, "decision": verdict.decision, "reason": verdict.reason, "redacted": None,
             "missing_fields": [], "missing_recommended": [], "profile": None, "roles": None,
             "masked_pdf_b64": None, "warning": None}
@@ -57,7 +59,7 @@ def success(name: str, verdict, parsed, masked_b64, warning, missing, recommende
 
 def intake_error(ext: str, data: bytes):
     if ext not in ALLOWED_TYPES:
-        return f"unsupported file type ({ext or 'no extension'}): the parser takes PDF or DOCX"
+        return f"unsupported file type ({ext or 'no extension'}): send a PDF or DOCX resume (or a PDF, DOCX, TXT or DOC job description)"
     if not data:
         return "empty file"
     if len(data) > settings.MAX_UPLOAD_BYTES:
@@ -181,9 +183,13 @@ async def screen_top_roles(run: audit.Run, profile: dict, roles: dict):
         elif not profile.get("id"):
             roles["screening"] = {"status": "skipped", "message": "Questlight returned no ID for the new profile, so it can't be put on a job"}
         else:
+            # A new profile starts as NEW_CANDIDATE; once one screening has raised it to SCREENING, the others needn't.
+            status = "SCREENING" if any((m.get("screening") or {}).get("status_updated") for m in roles["matches"]) else "NEW_CANDIDATE"
             for m in roles["matches"][:matching.TOP_N]:
                 if (m.get("screening") or {}).get("status") not in ("screened", "already"):
-                    m["screening"] = await questlight.add_to_screening(profile["id"], m["id"])
+                    m["screening"] = await questlight.add_to_screening(profile["id"], m["id"], status)
+                    if m["screening"].get("status_updated"):
+                        status = "SCREENING"
             done = [m for m in roles["matches"][:matching.TOP_N] if m["screening"]["status"] in ("screened", "already")]
             titles = ", ".join(m["title"] for m in done)
             first_error = next((m["screening"]["message"] for m in roles["matches"][:matching.TOP_N] if m["screening"]["status"] == "failed"), None)
@@ -204,12 +210,16 @@ async def screen_top_roles(run: audit.Run, profile: dict, roles: dict):
 
 # ---------- the whole run ----------
 
-async def run_pipeline(run: audit.Run, name: str, ext: str, data: bytes, state: dict = None) -> dict:
+async def run_pipeline(run: audit.Run, name: str, ext: str, data: bytes, state: dict | None = None) -> dict:
     text, verdict, failure = junk_step(run, name, ext, data)
     if failure:
         return failure
+    assert text is not None and verdict is not None  # junk_step returns them unless it failed
     if verdict.decision != "accepted":
         return stopped(name, verdict)
+    if ext not in RESUME_TYPES:
+        return fail(run, "intake", f"this looks like a resume, but resumes are read from PDF or DOCX only ({ext} given): "
+                    "ask for it as a PDF or DOCX")
 
     p = await parse_step(run, name, ext, data)
     if p["failed"]:
@@ -225,7 +235,7 @@ async def run_pipeline(run: audit.Run, name: str, ext: str, data: bytes, state: 
     return success(name, verdict, p["parsed"], p["masked_b64"], p["warning"], missing, recommended, profile, roles)
 
 
-async def process_file(name: str, data: bytes, channel: str = audit.CHANNEL, state: dict = None) -> dict:
+async def process_file(name: str, data: bytes, channel: str = audit.CHANNEL, state: dict | None = None) -> dict:
     """Runs one file through the whole pipeline. Used by the upload page and by the Perfox agent's MCP tool.
     One file = one trace: every step runs in a span that records its time and, for LLM calls, tokens.
     state (optional): a dict this fills with the run, the resume text and the parsed JSON, so the agent's tools can go
@@ -243,6 +253,13 @@ async def process_file(name: str, data: bytes, channel: str = audit.CHANNEL, sta
                 root.fail(result["error"])
     finally:
         trace.save()
+    if result.get("decision") == "job_description":  # a JD, not a resume: the JD intake takes it over, in the same run
+        from app import job_pipeline
+        if state is not None:
+            state.clear()
+        jd = await job_pipeline.process_jd(name, data, channel=channel, state=state, run=run)
+        jd["resume_check_trace"] = trace.summary()
+        return jd
     result["parser"] = settings.PARSER
     result["trace"] = trace.summary()
     return result

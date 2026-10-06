@@ -75,5 +75,22 @@ if headers:
           status == 400 and any("jobTitle" in e for e in errors) and any("companyName" in e for e in errors)
           and any("institution" in e for e in errors) and any("graduation_year" in e for e in errors), errors)
 
+# ---- job descriptions: the real JD parser (stateless), and a job body Questlight MUST reject ----
+from app.intake import jobs  # noqa: E402
+
+jd_text = (ROOT / "tests" / "fixtures" / "jds" / "files" / "d03_jd_structured.txt").read_text(encoding="utf-8")  # invented
+parsed_jd, err = asyncio.run(jobs.parse("jd.txt", b"", ".txt", jd_text))
+parsed_jd = parsed_jd or {}
+check("Questlight's real JD parser reads an invented JD", err is None and "QA" in str(parsed_jd.get("jobPositionTitle")) and parsed_jd.get("primarySkills"), err)
+if headers:
+    details = jobs.from_parsed(parsed_jd or {})
+    built = jobs.review({**details, "client_id": "00000000-0000-4000-8000-000000000000", "business_head_id": "00000000-0000-4000-8000-000000000000",
+                         "recruiter_id": "00000000-0000-4000-8000-000000000000", "country_id": "101", "state_id": "4026", "city_id": "57933"})["body"]
+    built["jobPositionTitle"] = 12345  # the one deliberate fault: Questlight must refuse, so nothing is created
+    r = httpx.post(f"{questlight.api_base()}/jobs/create", headers=headers, json=built, timeout=60)
+    msgs = (r.json() if r.headers.get("content-type", "").startswith("application/json") else {}).get("errorMessage") or []
+    check("a job body built by our code: Questlight's only complaint is the deliberately wrong title",
+          r.status_code == 400 and msgs == ["jobPositionTitle must be a string"], (r.status_code, msgs))
+
 print(f"(parser: {settings.PARSER}; nothing was created in Questlight)")
 finish()

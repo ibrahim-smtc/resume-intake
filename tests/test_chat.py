@@ -116,7 +116,7 @@ check("a made-up token in text is not mistaken for a file reference", intakes.fi
 
 # ---------- bad input never reaches Perfox ----------
 before = len(seen)
-check("a wrong file type is refused here", chat("here", file=("notes.txt", b"hello", "text/plain")).json() == {"ok": False, "error": "notes.txt: I can only read PDF or DOCX files."})
+check("a wrong file type is refused here", chat("here", file=("photo.png", b"hello", "image/png")).json() == {"ok": False, "error": "photo.png: I can only read PDF, DOCX, TXT or DOC files."})
 check("an empty file is refused here", "empty" in chat("here", file=("empty.pdf", b"", "application/pdf")).json()["error"])
 check("a file over the limit is refused here", "5 MB" in chat("here", file=("big.pdf", b"%PDF" + b"0" * (5 * 1024 * 1024), "application/pdf")).json()["error"])
 check("a blank message is refused here", chat("   ").json() == {"ok": False, "error": "nothing to send"})

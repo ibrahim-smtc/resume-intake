@@ -23,6 +23,10 @@ STATIC_DIR = ROOT / "app" / "static"
 PARSER = os.getenv("RESUME_PARSER", "questlight").lower()
 PARSING_BASE_URL = os.getenv("PARSING_BASE_URL", "https://dev-api.quest-light.com/parsing")
 PARSER_TIMEOUT_S = 60
+# Questlight's matching service (its own semantic matching), started for each job created from a JD.
+MATCHING_BASE_URL = os.getenv("MATCHING_BASE_URL", "https://dev-api.quest-light.com/matching")
+# How many of the best candidates a job created from a JD is screened with.
+JD_SCREEN_TOP = int(os.getenv("JD_SCREEN_TOP") or 3)
 
 # Masking is off until told otherwise. It covers Questlight's masked-PDF call and the redaction of the candidate JSON that
 # the page and the agent see. The code for both is kept.
