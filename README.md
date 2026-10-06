@@ -69,7 +69,7 @@ All of them are in [.env.example](.env.example), with what each means. The ones 
 | `RESUME_PARSER` | `questlight` (default) or `perfox` (temporary stand-in) |
 | `MCP_TOKEN` | the bearer token the Perfox agent must send to `/mcp` |
 | `PERFOX_WEBHOOK_URL`, `PERFOX_WEBHOOK_SECRET` | connect the chat page to the Perfox agent (without them the page uploads straight into the pipeline) |
-| `APP_PASSWORD` | password for the pages and APIs. **Required on Vercel** |
+| `APP_PASSWORD` | optional password for the pages and APIs. Not set = open to anyone with the URL (fine for testing) |
 
 ## Tests
 
@@ -92,8 +92,9 @@ docs and secrets out of the upload).
 1. Put the project in a Git repository and import it in Vercel (or run `vercel` from this folder). No build command is needed.
    Check that `.env` is **not** committed (it is in `.gitignore`).
 2. Under *Settings > Environment Variables* add the settings from `.env.example`: at least `QUESTLIGHT_TOKEN`, `RESUME_PARSER`,
-   `MCP_TOKEN`, `PERFOX_WEBHOOK_URL`, `PERFOX_WEBHOOK_SECRET` and **`APP_PASSWORD`**. Without `APP_PASSWORD` every page and API
-   answers 503 on purpose: the app never serves them to the open internet by accident.
+   `MCP_TOKEN`, `PERFOX_WEBHOOK_URL` and `PERFOX_WEBHOOK_SECRET`. `APP_PASSWORD` is optional: without it the pages are open to
+   anyone with the URL, which is fine while testing but means anyone can create profiles in Questlight with your token. Set it
+   before sharing the link.
 3. Deploy, open the URL, and enter the password (any user name).
 4. In Perfox, change the MCP integration's URL to `https://<project>.vercel.app/mcp` and click Rediscover. The tunnel is no longer
    needed. The webhook URL doesn't change.
@@ -115,7 +116,7 @@ Vercel's documentation for FastAPI and Python functions.
 - **Vercel's own "Deployment Protection"** (if switched on for the project) would block Perfox from calling `/mcp`. Use this app's
   password and bearer token instead, or set up Vercel's protection bypass for Perfox.
 - **Secrets.** The Perfox API shows a trigger's webhook secret in plain text, and secrets have been pasted around while building
-  this. Generate fresh values for production: a new `MCP_TOKEN`, a new webhook Auth Secret, a new `APP_PASSWORD`.
+  this. Generate fresh values for production: a new `MCP_TOKEN`, a new webhook Auth Secret, and an `APP_PASSWORD`.
 
 ## More
 

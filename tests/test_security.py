@@ -51,13 +51,11 @@ with TestClient(app) as client:
           client.get("/", headers=TUNNEL, auth=("u", "s3cret:with:colons")).status_code == 200)
     os.environ.pop("APP_PASSWORD")
 
-    # ---- on Vercel without a password: closed, never open by accident ----
+    # ---- on Vercel: open unless a password is set (the testing phase) ----
     settings.ON_VERCEL = True
-    r = client.get("/")
-    check("on Vercel with no password, pages answer 503 and say what to set", r.status_code == 503 and "APP_PASSWORD" in r.text, r.text)
-    check("on Vercel with no password, the APIs are closed as well",
-          client.get("/api/log").status_code == 503 and client.post("/api/chat", data={"message": "x"}).status_code == 503)
-    check("on Vercel, /mcp still works with its token", client.post("/mcp", json=TOOLS_LIST, headers=AGENT).status_code == 200)
+    check("on Vercel with no password, the pages and APIs are open", all(client.get(p).status_code == 200 for p in ("/", "/log", "/api/config", "/api/tools")))
+    check("...and the tunnel rule does not apply there (a proxy's headers must not lock the pages)", client.get("/", headers=TUNNEL).status_code == 200)
+    check("on Vercel, /mcp still needs its token", client.post("/mcp", json=TOOLS_LIST).status_code == 401 and client.post("/mcp", json=TOOLS_LIST, headers=AGENT).status_code == 200)
     os.environ["APP_PASSWORD"] = "pw"
     check("on Vercel with a password, the page opens with it", client.get("/", auth=("u", "pw")).status_code == 200 and client.get("/").status_code == 401)
     os.environ.pop("APP_PASSWORD")
