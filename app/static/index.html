@@ -117,7 +117,7 @@
     .frame.chatting .panel { flex-grow: 1; }
     .box { flex: none; padding: 16px 18px 12px 16px; }
     .frame.chatting .box { border-top: 1px solid var(--line); }
-    .chip { display: none; align-items: center; gap: 8px; margin: 2px 4px 10px 12px; padding: 6px 8px 6px 12px; width: fit-content; max-width: calc(100% - 64px);
+    .chip { display: none; align-items: center; gap: 8px; margin: 2px 4px 10px 56px; padding: 6px 8px 6px 12px; width: fit-content; max-width: calc(100% - 64px);
       background: #eef3f8; border-radius: 999px; font-size: 14px; }
     .chip.on { display: flex; }
     .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -126,11 +126,13 @@
     .row { display: flex; align-items: flex-end; gap: 10px; }
     .round { all: unset; box-sizing: border-box; cursor: pointer; flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; }
     .round svg { width: 22px; height: 22px; }
+    #plus { background: #eef1f5; color: #2a3646; }
+    #plus:hover { background: #dfe5ec; }
     #send { background: var(--ink); color: #fff; }
     #send:hover { background: #2b3a4d; }
-    #send:disabled { opacity: .35; cursor: default; }
+    #send:disabled, #plus:disabled { opacity: .35; cursor: default; }
     textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: 0; background: transparent; font: inherit; font-size: 17px; line-height: 1.5; color: var(--ink);
-      padding: 10px 12px; max-height: 140px; }
+      padding: 10px 4px; max-height: 140px; }
     textarea::placeholder { color: #8895a5; }
     .hint { margin: 8px 0 0; text-align: center; font-size: 11.5px; color: #98a3b1; }   /* inside the white box, under the input row */
 
@@ -180,7 +182,10 @@
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
         <div class="row">
           <input id="picker" type="file" accept=".pdf,.docx" hidden>
-          <textarea id="text" rows="1" placeholder="Type a message or drag a resume here..." aria-label="Message"></textarea>
+          <button class="round" id="plus" type="button" aria-label="Attach a resume (PDF or DOCX)" title="Attach a resume (PDF or DOCX)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <textarea id="text" rows="1" placeholder="Type a message, or click + to attach a resume" aria-label="Message"></textarea>
           <button class="round" id="send" type="submit" aria-label="Send" title="Send">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
           </button>
@@ -221,8 +226,8 @@
       return n;
     }
 
-    // ---- attaching a file: drag and drop ----
-    if (plus) plus.addEventListener("click", () => picker.click());
+    // ---- attaching a file: the + button, drag and drop ----
+    plus.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => { if (picker.files[0]) attach(picker.files[0]); picker.value = ""; });
     document.getElementById("chip-x").addEventListener("click", () => { attached = null; renderChip(); text.focus(); });
 
@@ -249,7 +254,7 @@
     function renderChip() {
       chip.classList.toggle("on", !!attached);
       chipName.textContent = attached ? attached.name : "";
-      text.placeholder = attached ? "Press Enter to send" : "Type a message or drag a resume here...";
+      text.placeholder = attached ? "Press Enter to send" : "Type a message, or click + to attach a resume";
     }
 
     // ---- sending ----
@@ -284,13 +289,13 @@
       frame.classList.add("chatting");
       if (!greeted) {   // an empty white panel would look broken, so the assistant says hello as it opens
         greeted = true;
-        addBot(el("div", "Hi! Drag and drop a candidate's resume (PDF or DOCX) here or type a message. " +
+        addBot(el("div", "Hi! Click + to attach a candidate's resume (PDF or DOCX), or drag and drop it here, then press Enter. " +
           "I'll screen it, create the profile in Questlight and match it to your open roles." +
           (agentMode ? " You can also ask me what came in recently." : "") + " Type /tools to see everything I can do."));
       }
     }
     function scrollDown() { thread.scrollTop = thread.scrollHeight; }
-    function setBusy(on) { busy = on; send.disabled = on; if (plus) plus.disabled = on; }
+    function setBusy(on) { busy = on; send.disabled = on; plus.disabled = on; }
 
     function addUser(content) {
       const m = el("div", undefined, "msg user");
