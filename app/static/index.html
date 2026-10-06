@@ -75,8 +75,13 @@
     .msg.user { align-self: flex-end; max-width: 80%; }
     .msg.user .bubble { background: #eef1f5; color: var(--ink); border-radius: 20px 20px 6px 20px; padding: 11px 16px; font-size: 15px; word-break: break-word; }
     .msg.bot .bubble { color: var(--ink); padding: 2px 0 6px; font-size: 15px; line-height: 1.5; }   /* flat on the white panel, no card */
-    .file-line { display: flex; align-items: center; gap: 8px; }
-    .file-line svg { width: 18px; height: 18px; flex: none; }
+    /* An attached file: a coloured type badge (red PDF, blue DOC) and the file name, on the chip above the text box and in the chat. */
+    .fileinfo { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .ftype { flex: none; display: inline-grid; place-items: center; min-width: 46px; height: 28px; padding: 0 10px; border-radius: 8px;
+      color: #fff; font-size: 12.5px; font-weight: 700; letter-spacing: .03em; }
+    .ftype.pdf { background: #df4f4b; }
+    .ftype.doc { background: #2f6fd6; }
+    .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
     .working { display: flex; align-items: center; gap: 12px; color: var(--muted); }
     .spin { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid #d3dbe5; border-top-color: #1d4f9c; animation: spin .8s linear infinite; flex: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -129,10 +134,10 @@
     .frame.chatting .panel { flex-grow: 1; }
     .box { flex: none; padding: 16px 18px 12px 16px; }
     .frame.chatting .box { border-top: 1px solid var(--line); }
-    .chip { display: none; align-items: center; gap: 8px; margin: 2px 4px 10px 56px; padding: 6px 8px 6px 12px; width: fit-content; max-width: calc(100% - 64px);
-      background: #eef3f8; border-radius: 999px; font-size: 14px; }
+    .chip { display: none; align-items: center; gap: 14px; margin: 2px 4px 10px 56px; padding: 8px 8px 8px 8px; width: fit-content; max-width: calc(100% - 64px);
+      background: #f3f5f8; border: 1px solid #e3e8ee; border-radius: 14px; font-size: 15px; }
     .chip.on { display: flex; }
-    .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip #chip-name { min-width: 0; }
     .chip button { all: unset; cursor: pointer; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: #52606f; flex: none; }
     .chip button:hover { background: #d9e2ec; }
     .row { display: flex; align-items: flex-end; gap: 10px; }
@@ -229,8 +234,6 @@
       if (c.max_mb) { maxMb = c.max_mb; document.getElementById("max-mb").textContent = maxMb; }
     }).catch(() => {});
 
-    const FILE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
-
     function el(tag, content, cls) {
       const n = document.createElement(tag);
       if (content !== undefined && content !== null) n.textContent = content;
@@ -265,7 +268,7 @@
 
     function renderChip() {
       chip.classList.toggle("on", !!attached);
-      chipName.textContent = attached ? attached.name : "";
+      chipName.replaceChildren(...(attached ? [fileItem(attached)] : []));
       text.placeholder = attached ? "Press Enter to send" : "Type a message, or click + to attach a resume";
     }
 
@@ -323,16 +326,19 @@
       return b;
     }
 
-    function fileLine(file) {
-      const line = el("div", undefined, "file-line");
-      line.insertAdjacentHTML("beforeend", FILE_ICON);   // the icon is a fixed string, never user data
-      line.appendChild(el("span", file.name));
-      return line;
+    // A file as a coloured type badge (red PDF, blue DOC) next to its name without the extension.
+    function fileItem(file) {
+      const isPdf = /\.pdf$/i.test(file.name);
+      const item = el("span", undefined, "fileinfo");
+      const name = el("span", file.name.replace(/\.(pdf|docx)$/i, ""), "fname");
+      name.title = file.name;
+      item.append(el("span", isPdf ? "PDF" : "DOC", "ftype " + (isPdf ? "pdf" : "doc")), name);
+      return item;
     }
 
     // ---- through the Perfox agent: the message (and the resume, which stays on our server) go to /api/chat ----
     async function chat(words, file) {
-      if (file) addUser(fileLine(file));
+      if (file) addUser(fileItem(file));
       const working = el("div", undefined, "working");
       working.append(el("div", undefined, "spin"), el("span", file ? "The agent is reading the resume… this can take up to a minute" : "Thinking…"));
       const bubble = addBot(working);
@@ -449,7 +455,7 @@
     }
 
     async function run(file) {
-      addUser(fileLine(file));
+      addUser(fileItem(file));
       const working = el("div", undefined, "working");
       working.append(el("div", undefined, "spin"), el("span", "Reading the resume… this can take up to a minute"));
       const bubble = addBot(working);
