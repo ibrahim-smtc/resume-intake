@@ -1,0 +1,8 @@
+# What the app needs at runtime, and what Vercel installs. The lower bounds are the versions it was tested with.
+fastapi>=0.115,<1
+uvicorn>=0.30                # only for running locally (python run.py); Vercel runs the app itself
+httpx>=0.28,<1
+python-multipart>=0.0.20     # file uploads
+python-dotenv>=1.0           # reads .env locally
+pypdf>=6                     # reads the text of a PDF
+mcp>=1.29,<2                 # the MCP server SDK; 2.x changes its API

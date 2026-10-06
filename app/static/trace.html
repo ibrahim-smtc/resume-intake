@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step Traces</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #fff; color: #1a1a1a;
+      font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 32px 16px; }
+    header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 20px; }
+    h2 { margin: 28px 0 0; font-size: 15px; }
+    a { color: #1a56db; }
+    nav a { font-size: 14px; margin-left: 14px; }
+    .sub { margin: 6px 0 0; color: #555; font-size: 14px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
+    .chip { padding: 6px 12px; border-radius: 6px; font-size: 13px; background: #f3f3f3; }
+    .chip b { font-weight: 600; }
+    .hint { margin: 8px 0 0; font-size: 12px; color: #888; }
+    .table-wrap { overflow-x: auto; margin-top: 10px; }
+    table.list { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.list th, table.list td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; white-space: nowrap; }
+    table.list th { color: #555; font-weight: 600; }
+    table.list td.num { font-variant-numeric: tabular-nums; }
+    .err { color: #8f2020; font-weight: 600; }
+    .muted { color: #888; }
+    #msg { margin-top: 24px; color: #666; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1 id="title">Traces</h1>
+      <nav><a href="/trace">All traces</a><a href="/log">Audit log</a><a href="/">Upload</a></nav>
+    </header>
+    <div id="content"></div>
+    <div id="msg" hidden></div>
+  </main>
+
+  <script src="/static/trace-view.js"></script>
+  <script>
+    const content = document.getElementById("content");
+    const msg = document.getElementById("msg");
+    const ms = TraceView.ms;
+
+    function el(tag, text, cls) {
+      const n = document.createElement(tag);
+      if (text !== undefined && text !== null) n.textContent = text;
+      if (cls) n.className = cls;
+      return n;
+    }
+
+    function chip(label, value) {
+      const c = el("div", undefined, "chip");
+      c.append(el("b", value), document.createTextNode(" " + label));
+      return c;
+    }
+
+    function say(text) { msg.textContent = text; msg.hidden = false; }
+
+    function table(headers, rows) {
+      const wrap = el("div", undefined, "table-wrap");
+      const t = el("table", undefined, "list");
+      const head = el("tr");
+      headers.forEach(h => head.appendChild(el("th", h)));
+      t.appendChild(head);
+      rows.forEach(cells => {
+        const tr = el("tr");
+        cells.forEach(c => tr.appendChild(c instanceof Node ? c : el("td", c)));
+        t.appendChild(tr);
+      });
+      wrap.appendChild(t);
+      return wrap;
+    }
+
+    function num(v, cls) { return el("td", v, "num" + (cls ? " " + cls : "")); }
+    function tok(i, o) { return (i || o) ? Number(i + o).toLocaleString() + " (" + Number(i).toLocaleString() + " in · " + Number(o).toLocaleString() + " out)" : "0"; }
+
+    async function showOne(id) {
+      const resp = await fetch("/api/trace/" + encodeURIComponent(id));
+      if (!resp.ok) { say("No trace with this ID. It may be from before tracing was added."); return; }
+      const t = await resp.json();
+      document.getElementById("title").textContent = "Trace: " + (t.file || t.trace_id);
+      const sub = el("p", new Date(t.start_ts).toLocaleString() + " · run " + t.trace_id, "sub");
+      content.appendChild(sub);
+      const chips = el("div", undefined, "chips");
+      chips.append(chip("total time", ms(t.total_ms)), chip("tokens", tok(t.input_tokens, t.output_tokens)),
+        chip("LLM calls", t.llm_calls), chip("steps", t.spans.length), chip("status", t.status));
+      content.appendChild(chips);
+      TraceView.render(content, t);
+      content.appendChild(el("p", "Click a step to see its details. Times are the full round trip as this app sees it, network included.", "hint"));
+    }
+
+    async function showAll() {
+      const { traces, steps, langsmith } = await (await fetch("/api/traces")).json();
+      if (!traces.length) { say("No traces yet. Upload a resume and its steps will show up here."); return; }
+
+      const inTok = traces.reduce((a, t) => a + (t.input_tokens || 0), 0);
+      const outTok = traces.reduce((a, t) => a + (t.output_tokens || 0), 0);
+      const avg = traces.reduce((a, t) => a + (t.total_ms || 0), 0) / traces.length;
+      const chips = el("div", undefined, "chips");
+      chips.append(chip("uploads traced", traces.length), chip("tokens", tok(inTok, outTok)), chip("average upload time", ms(avg)),
+        chip("LangSmith export", langsmith ? "on" : "off"));
+      content.appendChild(chips);
+
+      content.appendChild(el("h2", "Per step"));
+      content.appendChild(table(["Step", "Type", "Runs", "Average", "Slowest", "Tokens", "Errors"],
+        steps.map(s => [s.name, s.kind, num(s.runs), num(ms(s.avg_ms)), num(ms(s.max_ms)),
+          num(s.kind === "llm" ? tok(s.input_tokens, s.output_tokens) : ""), num(s.errors || "", s.errors ? "err" : "")])));
+
+      content.appendChild(el("h2", "Recent uploads"));
+      content.appendChild(table(["Time", "File", "Total", "Tokens", "Errors"],
+        traces.map(t => {
+          const link = el("td"); const a = el("a", t.file || t.trace_id); a.href = "/trace?id=" + encodeURIComponent(t.trace_id); link.appendChild(a);
+          return [new Date(t.start_ts).toLocaleString(), link, num(ms(t.total_ms)), num(tok(t.input_tokens, t.output_tokens)),
+            num(t.errors || "", t.errors ? "err" : "")];
+        })));
+    }
+
+    const id = new URLSearchParams(location.search).get("id");
+    (id ? showOne(id) : showAll()).catch(err => say("Couldn't load traces (" + err.message + ")."));
+  </script>
+</body>
+</html>

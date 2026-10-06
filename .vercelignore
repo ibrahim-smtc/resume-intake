@@ -1,0 +1,13 @@
+# Not part of the deployed app. (.env is never uploaded: set the variables in Vercel instead.)
+.env
+.env.*
+.venv
+tools
+tests
+docs
+sources
+data
+*.db
+__pycache__
+requirements-dev.txt
+run.py

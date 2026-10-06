@@ -1,0 +1,20 @@
+# Secrets and local data: never commit these
+.env
+.env.*
+!.env.example
+data/
+*.db
+
+# Environments, caches and tools
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.vercel/
+tools/
+
+# Internal material, kept on this machine only. This repository is public: sources/ holds Questlight's own documents, and
+# docs/notes.md has internal API findings and test-data details.
+sources/
+docs/notes.md

@@ -1,0 +1,122 @@
+[
+ {
+  "file": "r01_standard.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "r02_standard.docx",
+  "expected": "accepted"
+ },
+ {
+  "file": "r03_no_email.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "r04_no_contact.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "r05_title_case_heads.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "r06_professional_heads.docx",
+  "expected": "accepted"
+ },
+ {
+  "file": "r07_fresher.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "r08_nontech_sales.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "r09_cv_word.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "r10_long_two_page.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "r11_odd_heads.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "r12_minimal_text.docx",
+  "expected": "accepted"
+ },
+ {
+  "file": "c01_cover_letter.pdf",
+  "expected": "needs_review"
+ },
+ {
+  "file": "c02_cover_letter.docx",
+  "expected": "needs_review"
+ },
+ {
+  "file": "s01_scanned.pdf",
+  "expected": "needs_review"
+ },
+ {
+  "file": "j01_blank.pdf",
+  "expected": "junk"
+ },
+ {
+  "file": "j02_blank.docx",
+  "expected": "junk"
+ },
+ {
+  "file": "j03_tiny.pdf",
+  "expected": "junk"
+ },
+ {
+  "file": "j04_spam_promo.pdf",
+  "expected": "junk"
+ },
+ {
+  "file": "j05_spam_money.docx",
+  "expected": "junk"
+ },
+ {
+  "file": "j06_invoice.pdf",
+  "expected": "junk"
+ },
+ {
+  "file": "j07_receipt.pdf",
+  "expected": "junk"
+ },
+ {
+  "file": "j08_job_ad.pdf",
+  "expected": "junk"
+ },
+ {
+  "file": "j09_meeting_minutes.docx",
+  "expected": "junk"
+ },
+ {
+  "file": "j10_recipe.pdf",
+  "expected": "junk"
+ },
+ {
+  "file": "j11_essay.docx",
+  "expected": "junk"
+ },
+ {
+  "file": "j12_bank_statement.pdf",
+  "expected": "junk"
+ },
+ {
+  "file": "t01_resume_mentions_invoice.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "t02_resume_says_apply.pdf",
+  "expected": "accepted"
+ },
+ {
+  "file": "t03_resume_no_headings_paragraph.pdf",
+  "expected": "accepted"
+ }
+]

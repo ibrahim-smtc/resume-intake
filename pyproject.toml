@@ -1,0 +1,10 @@
+# Tells Vercel where the app is. Dependencies are in requirements.txt.
+[tool.vercel]
+entrypoint = "app.main:app"
+
+# Editor settings (Pylance/Pyright): use the project's virtual environment, and let the test scripts find their helpers.
+[tool.pyright]
+include = ["app", "tests", "run.py"]
+extraPaths = ["tests"]
+venvPath = "."
+venv = ".venv"

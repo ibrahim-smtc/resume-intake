@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Resume Intake</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --ink: #14202e;
+      --muted: #5b6776;
+      --line: #e6eaef;
+      --green: #17612b; --green-bg: #e3f4e6;
+      --red: #8f2020; --red-bg: #fbe4e4;
+      --amber: #7a5200; --amber-bg: #fff1d6;
+      --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+      --sans: Inter, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    html, body { margin: 0; height: 100%; background: #fff; color: var(--ink); font-family: var(--sans); }
+
+    /* The rounded picture frame, like the reference: the photo fills it, a dark wash keeps the white text readable. */
+    .frame {
+      position: relative; display: flex; flex-direction: column; overflow: hidden;
+      height: calc(100vh - 32px); height: calc(100dvh - 32px); min-height: 560px; margin: 16px; border-radius: 28px; color: #fff;
+      background:
+        linear-gradient(180deg, rgba(6, 28, 58, .62) 0%, rgba(6, 28, 58, .44) 35%, rgba(6, 28, 58, .34) 58%, rgba(0, 0, 0, .12) 74%, rgba(0, 0, 0, .36) 100%),
+        #1b3a5c url("/static/nature.jpg") center 35% / cover no-repeat;
+    }
+    .frame.dragging::after { content: "Drop the resume to upload it"; position: absolute; inset: 12px; z-index: 20; display: grid;
+      place-items: center; border: 2px dashed rgba(255,255,255,.9); border-radius: 22px; background: rgba(6, 28, 58, .55);
+      font-size: 20px; font-weight: 500; }
+
+    /* ---- top bar ---- */
+    nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 40px; flex: none; }
+    .brand { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 600; letter-spacing: -.02em; color: #fff; text-decoration: none; }
+    .brand svg { width: 34px; height: 34px; }
+    .links { display: flex; gap: 34px; }
+    .links a { color: rgba(255,255,255,.92); text-decoration: none; font-size: 17px; font-weight: 500; }
+    .links a:hover, .links a[aria-current] { color: #fff; text-shadow: 0 0 1px #fff; }
+    .pill { display: inline-block; padding: 13px 24px; border-radius: 999px; background: #fff; color: var(--ink); font-size: 16px;
+      font-weight: 500; text-decoration: none; }
+    .pill:hover { background: #eef3f8; }
+    a:focus-visible, button:focus-visible { outline: 3px solid #9cc4ff; outline-offset: 2px; }
+
+    /* ---- hero ---- */
+    .hero { flex: 1 1 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 0 24px 24px; text-align: center; transition: flex-grow .55s cubic-bezier(.2, .8, .2, 1), opacity .3s; }
+    h1 { margin: 0; font-family: var(--serif); font-weight: 400; font-size: clamp(48px, 7.4vw, 104px); line-height: .98;
+      letter-spacing: -.025em; max-width: 12.5em; text-wrap: balance; text-shadow: 0 2px 30px rgba(0, 20, 50, .25); }
+    .sub { margin: 26px 0 0; max-width: 640px; font-size: clamp(16px, 1.55vw, 20px); line-height: 1.6; color: rgba(255,255,255,.93);
+      text-shadow: 0 1px 14px rgba(0, 20, 50, .35); }
+    .frame.chatting .hero { flex-grow: 0; opacity: 0; visibility: hidden; padding: 0;
+      transition: flex-grow .55s cubic-bezier(.2, .8, .2, 1), opacity .25s, visibility 0s .55s; }
+
+    /* ---- conversation ---- */
+    #thread { flex: 1 1 0; min-height: 0; overflow-y: auto; display: none; padding: 28px 32px 12px; scroll-behavior: smooth; }
+    .frame.chatting #thread { display: block; }
+    .thread-in { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+    .msg { max-width: 100%; }
+    .msg.user { align-self: flex-end; max-width: 80%; }
+    .msg.user .bubble { background: #eef1f5; color: var(--ink); border-radius: 20px 20px 6px 20px; padding: 11px 16px; font-size: 15px; word-break: break-word; }
+    .msg.bot .bubble { color: var(--ink); padding: 2px 0 6px; font-size: 15px; line-height: 1.5; }   /* flat on the white panel, no card */
+    .file-line { display: flex; align-items: center; gap: 8px; }
+    .file-line svg { width: 18px; height: 18px; flex: none; }
+    .working { display: flex; align-items: center; gap: 12px; color: var(--muted); }
+    .spin { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid #d3dbe5; border-top-color: #1d4f9c; animation: spin .8s linear infinite; flex: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } #thread { scroll-behavior: auto; } }
+
+    .badge { display: inline-block; margin: 14px 0 0; padding: 5px 12px; border-radius: 6px; font-size: 14px; font-weight: 600; }
+    .bubble > .badge:first-child { margin-top: 0; }
+    .badge.accepted { background: var(--green-bg); color: var(--green); }
+    .badge.junk { background: var(--red-bg); color: var(--red); }
+    .badge.needs_review { background: var(--amber-bg); color: var(--amber); }
+    .reason { margin: 6px 0 0; font-size: 14px; color: #3f4a58; }
+    .note { margin-top: 12px; font-size: 13px; color: #8a5a00; }
+    .err { color: var(--red); }
+    table.roles { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 13px; }
+    .tbl { overflow-x: auto; }
+    table.roles th, table.roles td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    table.roles th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+    table.roles .small { color: #8895a5; font-size: 12px; margin-top: 2px; }
+    details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+    summary { cursor: pointer; font-size: 14px; font-weight: 600; color: #3f4a58; }
+    pre { margin: 10px 0 0; padding: 14px; background: #f4f6f9; border-radius: 8px; font-size: 12px; line-height: 1.45; overflow: auto;
+      max-height: 380px; white-space: pre-wrap; word-break: break-word; }
+    .bubble a { color: #1a56db; }
+    .guide h3 { margin: 18px 0 6px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    .guide > p:first-child { margin: 0; }
+    .guide-item { padding: 10px 0; border-top: 1px solid var(--line); }
+    .guide h3 + .guide-item { border-top: 0; }
+    .guide-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .guide-item p { margin: 4px 0 0; font-size: 14px; color: #3f4a58; }
+    .guide-item .try { color: var(--muted); }
+    .guide-item .try em { font-style: normal; color: var(--ink); background: #f0f3f7; padding: 1px 6px; border-radius: 4px; }
+    .guide-item .tech { font-size: 11.5px; color: #98a3b1; }
+    .tag { padding: 2px 8px; border-radius: 999px; background: var(--amber-bg); color: var(--amber); font-size: 11.5px; font-weight: 600; }
+    .md > * { margin: 0 0 10px; }
+    .md > *:last-child { margin-bottom: 0; }
+    .md ul, .md ol { padding-left: 22px; }
+    .md li { margin: 2px 0; }
+    .md code { padding: 1px 5px; border-radius: 4px; background: #f0f3f7; font-size: 13px; }
+    .md table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .md th, .md td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .md th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+
+    /* ---- the white panel: docked flush on the bottom edge of the picture, rounded top corners only ----
+       At first it is just the text box. When the user types or attaches a file it rises up (the hero text collapses) and
+       becomes the whole conversation: the messages are inside it and the text box stays at its bottom. */
+    .panel { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; width: calc(100% - 170px); max-width: 1100px; margin: 0 auto;
+      background: #fff; color: var(--ink); border-radius: 30px 30px 0 0; box-shadow: 0 -10px 50px rgba(0, 20, 50, .30);
+      transition: flex-grow .55s cubic-bezier(.2, .8, .2, 1); }
+    .panel:focus-within { box-shadow: 0 -10px 50px rgba(0, 20, 50, .30), 0 0 0 3px rgba(156, 196, 255, .85); }  /* the ring replaces the textarea's own outline */
+    .frame.chatting .panel { flex-grow: 1; }
+    .box { flex: none; padding: 16px 18px 12px 16px; }
+    .frame.chatting .box { border-top: 1px solid var(--line); }
+    .chip { display: none; align-items: center; gap: 8px; margin: 2px 4px 10px 56px; padding: 6px 8px 6px 12px; width: fit-content; max-width: calc(100% - 64px);
+      background: #eef3f8; border-radius: 999px; font-size: 14px; }
+    .chip.on { display: flex; }
+    .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip button { all: unset; cursor: pointer; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: #52606f; flex: none; }
+    .chip button:hover { background: #d9e2ec; }
+    .row { display: flex; align-items: flex-end; gap: 10px; }
+    .round { all: unset; box-sizing: border-box; cursor: pointer; flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; }
+    .round svg { width: 22px; height: 22px; }
+    #plus { background: #eef1f5; color: #2a3646; }
+    #plus:hover { background: #dfe5ec; }
+    #send { background: var(--ink); color: #fff; }
+    #send:hover { background: #2b3a4d; }
+    #send:disabled, #plus:disabled { opacity: .35; cursor: default; }
+    textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: 0; background: transparent; font: inherit; font-size: 17px; line-height: 1.5; color: var(--ink);
+      padding: 10px 4px; max-height: 140px; }
+    textarea::placeholder { color: #8895a5; }
+    .hint { margin: 8px 0 0; text-align: center; font-size: 11.5px; color: #98a3b1; }   /* inside the white box, under the input row */
+
+    @media (max-width: 760px) {
+      .frame { margin: 8px; height: calc(100vh - 16px); height: calc(100dvh - 16px); border-radius: 22px; }
+      nav { padding: 16px 18px; }
+      .links { display: none; }
+      .pill { padding: 10px 16px; font-size: 14px; }
+      .brand { font-size: 19px; }
+      .panel { width: 100%; max-width: none; }
+      .box { padding: 14px 14px 10px 12px; }
+      .msg.user { max-width: 92%; }
+      #thread { padding: 20px 14px 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame" id="frame">
+    <nav>
+      <a class="brand" href="/" aria-label="Resume Intake home">
+        <svg viewBox="0 0 40 40" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 29c5-1 7-12 12-12s6 8 11 8 6-9 11-9"/><path d="M3 36c5-1 7-8 12-8s6 5 11 5 6-6 11-6"/><path d="M26 9c2-2 4-2 6 0M31 5c1.5-1.5 3-1.5 4.5 0"/>
+        </svg>
+        Resume Intake
+      </a>
+      <div class="links">
+        <a href="/" aria-current="page">Intake</a>
+        <a href="/log">Audit log</a>
+        <a href="/trace">Traces</a>
+      </div>
+      <a class="pill" href="/classic">Classic view</a>
+    </nav>
+
+    <section class="hero" id="hero">
+      <h1>Resumes in. Right roles out.</h1>
+      <p class="sub">It screens out the junk, reads each resume, creates the candidate in Questlight and matches them to your open roles. Just drop a file.</p>
+    </section>
+
+    <div class="panel" id="panel">
+      <div id="thread" role="log" aria-live="polite" aria-label="Conversation"><div class="thread-in" id="thread-in"></div></div>
+
+      <form class="box" id="form" autocomplete="off">
+        <div class="chip" id="chip"><span id="chip-name"></span><button type="button" id="chip-x" aria-label="Remove the attached file">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+        <div class="row">
+          <input id="picker" type="file" accept=".pdf,.docx" hidden>
+          <button class="round" id="plus" type="button" aria-label="Attach a resume (PDF or DOCX)" title="Attach a resume (PDF or DOCX)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <textarea id="text" rows="1" placeholder="Attach a resume with +" aria-label="Message"></textarea>
+          <button class="round" id="send" type="submit" aria-label="Send" title="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+          </button>
+        </div>
+        <div class="hint">PDF or DOCX, up to <span id="max-mb">5</span> MB. You can also drag a file anywhere on this page. Type /tools to see what I can do.</div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/trace-view.js"></script>
+  <script>
+    const frame = document.getElementById("frame");
+    const thread = document.getElementById("thread");
+    const threadIn = document.getElementById("thread-in");
+    const form = document.getElementById("form");
+    const picker = document.getElementById("picker");
+    const plus = document.getElementById("plus");
+    const send = document.getElementById("send");
+    const text = document.getElementById("text");
+    const chip = document.getElementById("chip");
+    const chipName = document.getElementById("chip-name");
+    let maxMb = 5;         // the server's upload limit, read from /api/config (4 on Vercel)
+    let attached = null;   // the resume waiting to be sent
+    let busy = false;      // the parser takes one file at a time, so one upload at a time
+    let agentMode = false; // true when the server has a Perfox webhook: the text box then talks to the agent
+    const sessionId = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).replace(/-/g, "");
+    fetch("/api/config").then(r => r.json()).then(c => {
+      agentMode = !!c.agent;
+      if (c.max_mb) { maxMb = c.max_mb; document.getElementById("max-mb").textContent = maxMb; }
+    }).catch(() => {});
+
+    const FILE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+
+    function el(tag, content, cls) {
+      const n = document.createElement(tag);
+      if (content !== undefined && content !== null) n.textContent = content;
+      if (cls) n.className = cls;
+      return n;
+    }
+
+    // ---- attaching a file: the + button, drag and drop ----
+    plus.addEventListener("click", () => picker.click());
+    picker.addEventListener("change", () => { if (picker.files[0]) attach(picker.files[0]); picker.value = ""; });
+    document.getElementById("chip-x").addEventListener("click", () => { attached = null; renderChip(); text.focus(); });
+
+    ["dragenter", "dragover"].forEach(t => frame.addEventListener(t, e => { e.preventDefault(); frame.classList.add("dragging"); }));
+    ["dragleave", "drop"].forEach(t => frame.addEventListener(t, e => { if (t === "drop" || e.target === frame) frame.classList.remove("dragging"); }));
+    frame.addEventListener("drop", e => { e.preventDefault(); if (e.dataTransfer.files[0]) attach(e.dataTransfer.files[0]); });
+
+    function attach(file) {
+      const problem = fileProblem(file);
+      if (problem) { startChat(); addBot(el("div", problem, "err")); return; }
+      startChat();
+      attached = file;
+      renderChip();
+      text.focus();
+    }
+
+    function fileProblem(file) {
+      if (!/\.(pdf|docx)$/i.test(file.name)) return `${file.name}: I can only read PDF or DOCX files.`;
+      if (file.size > maxMb * 1024 * 1024) return `${file.name} is larger than ${maxMb} MB.`;
+      if (file.size === 0) return `${file.name} is empty.`;
+      return null;
+    }
+
+    function renderChip() {
+      chip.classList.toggle("on", !!attached);
+      chipName.textContent = attached ? attached.name : "";
+      text.placeholder = attached ? "Press Enter to send" : "Attach a resume with +";
+    }
+
+    // ---- sending ----
+    text.addEventListener("input", () => {
+      text.style.height = "auto"; text.style.height = Math.min(text.scrollHeight, 140) + "px";
+      if (text.value) startChat();   // the panel rises as soon as the user starts typing
+    });
+    text.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
+    form.addEventListener("submit", e => {
+      e.preventDefault();
+      const typed = text.value.trim();
+      if (!attached && /^\/(tools|help)$/i.test(typed)) {   // answered here, never sent to the agent; works while a resume is processing too
+        startChat(); addUser(typed);
+        text.value = ""; text.style.height = "auto";
+        showTools();
+        return;
+      }
+      if (busy) return;
+      const words = text.value.trim();
+      if (!attached && !words) return;
+      startChat();
+      if (words) addUser(words);
+      text.value = ""; text.style.height = "auto";
+      const f = attached; attached = null; renderChip();
+      if (agentMode) chat(words, f);
+      else if (f) run(f);
+      else addBot(el("div", "For now I can only take in resumes: click + to attach a PDF or DOCX."));
+    });
+
+    let greeted = false;
+    function startChat() {
+      frame.classList.add("chatting");
+      if (!greeted) {   // an empty white panel would look broken, so the assistant says hello as it opens
+        greeted = true;
+        addBot(el("div", "Hi! Attach a candidate's resume (PDF or DOCX) with the + button and press Enter. " +
+          "I'll screen it, create the profile in Questlight and match it to your open roles." +
+          (agentMode ? " You can also ask me what came in recently." : "") + " Type /tools to see everything I can do."));
+      }
+    }
+    function scrollDown() { thread.scrollTop = thread.scrollHeight; }
+    function setBusy(on) { busy = on; send.disabled = on; plus.disabled = on; }
+
+    function addUser(content) {
+      const m = el("div", undefined, "msg user");
+      const b = el("div", undefined, "bubble");
+      if (content instanceof Node) b.appendChild(content); else b.textContent = content;
+      m.appendChild(b); threadIn.appendChild(m); scrollDown();
+    }
+    function addBot(content) {
+      const m = el("div", undefined, "msg bot");
+      const b = el("div", undefined, "bubble");
+      b.appendChild(content);
+      m.appendChild(b); threadIn.appendChild(m); scrollDown();
+      return b;
+    }
+
+    function fileLine(file) {
+      const line = el("div", undefined, "file-line");
+      line.insertAdjacentHTML("beforeend", FILE_ICON);   // the icon is a fixed string, never user data
+      line.appendChild(el("span", file.name));
+      return line;
+    }
+
+    // ---- through the Perfox agent: the message (and the resume, which stays on our server) go to /api/chat ----
+    async function chat(words, file) {
+      if (file) addUser(fileLine(file));
+      const working = el("div", undefined, "working");
+      working.append(el("div", undefined, "spin"), el("span", file ? "The agent is reading the resume… this can take up to a minute" : "Thinking…"));
+      const bubble = addBot(working);
+      setBusy(true);
+
+      let r;
+      try {
+        const body = new FormData();
+        body.append("session_id", sessionId);
+        body.append("message", words);
+        if (file) body.append("file", file);
+        const resp = await fetch("/api/chat", { method: "POST", body });
+        r = await resp.json().catch(() => ({}));
+        if (!resp.ok) r = { ok: false, error: r.detail || "HTTP " + resp.status };
+      } catch (err) {
+        r = { ok: false, error: "couldn't reach the server (" + err.message + ")" };
+      }
+      bubble.replaceChildren(r.ok ? markdown(r.reply) : el("div", r.error || "something went wrong", "err"));
+      setBusy(false);
+      bubble.parentElement.scrollIntoView({ block: "start" });
+    }
+
+    // A small, safe markdown reader for the agent's replies: paragraphs, bullet and numbered lists, tables, **bold**,
+    // `code`, headings. Everything is built with textContent, so nothing the agent writes can inject HTML.
+    function inline(parent, s) {
+      const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+      let last = 0, m;
+      while ((m = re.exec(s))) {
+        if (m.index > last) parent.appendChild(document.createTextNode(s.slice(last, m.index)));
+        parent.appendChild(m[0][0] === "`" ? el("code", m[0].slice(1, -1)) : el("strong", m[0].slice(2, -2)));
+        last = m.index + m[0].length;
+      }
+      if (last < s.length) parent.appendChild(document.createTextNode(s.slice(last)));
+    }
+    function cells(row) { return row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim()); }
+    function markdown(text) {
+      const box = el("div", undefined, "md");
+      const lines = String(text).replace(/\r/g, "").split("\n");
+      const isTable = i => /^\s*\|/.test(lines[i] || "") && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1] || "");
+      const isBullet = l => /^\s*[-*•]\s+/.test(l);
+      const isNumber = l => /^\s*\d+[.)]\s+/.test(l);
+      const special = i => isTable(i) || isBullet(lines[i]) || isNumber(lines[i]) || /^#{1,6}\s/.test(lines[i]);
+      let i = 0;
+      while (i < lines.length) {
+        if (!lines[i].trim()) { i++; continue; }
+        if (isTable(i)) {
+          const table = el("table"), head = el("tr");
+          cells(lines[i]).forEach(h => { const th = el("th"); inline(th, h); head.appendChild(th); });
+          table.appendChild(head);
+          i += 2;
+          while (i < lines.length && /^\s*\|/.test(lines[i])) {
+            const tr = el("tr");
+            cells(lines[i]).forEach(c => { const td = el("td"); inline(td, c); tr.appendChild(td); });
+            table.appendChild(tr); i++;
+          }
+          const wrap = el("div", undefined, "tbl"); wrap.appendChild(table); box.appendChild(wrap);
+        } else if (isBullet(lines[i]) || isNumber(lines[i])) {
+          const list = el(isBullet(lines[i]) ? "ul" : "ol"), test = isBullet(lines[i]) ? isBullet : isNumber;
+          while (i < lines.length && test(lines[i])) {
+            const li = el("li"); inline(li, lines[i].replace(/^\s*([-*•]|\d+[.)])\s+/, "")); list.appendChild(li); i++;
+          }
+          box.appendChild(list);
+        } else if (/^#{1,6}\s/.test(lines[i])) {
+          const p = el("p"), b = el("strong"); inline(b, lines[i].replace(/^#{1,6}\s+/, "")); p.appendChild(b); box.appendChild(p); i++;
+        } else {
+          const p = el("p");
+          let first = true;
+          while (i < lines.length && lines[i].trim() && !special(i)) {
+            if (!first) p.appendChild(document.createElement("br"));
+            inline(p, lines[i].trim()); first = false; i++;
+          }
+          box.appendChild(p);
+        }
+      }
+      return box;
+    }
+
+    // ---- /tools: everything the assistant can do, in plain words (the list comes from TOOL_GUIDE on the server) ----
+    async function showTools() {
+      let data;
+      try {
+        const resp = await fetch("/api/tools");
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        data = await resp.json();
+      } catch (err) {
+        const bubble = addBot(el("div", "I couldn't load the list (" + err.message + ").", "err"));
+        bubble.parentElement.scrollIntoView({ block: "start" });
+        return;
+      }
+      const box = el("div", undefined, "guide");
+      box.appendChild(el("p", "Here is everything I can do. Ask in your own words, or attach a resume with the + button."));
+      if (!data.agent) {
+        box.appendChild(el("p", "Heads up: this page is running without the AI assistant right now, so only attaching a resume works. " +
+          "The rest below is what the assistant does once it is connected.", "note"));
+      }
+      data.groups.forEach(g => {
+        box.appendChild(el("h3", g.group));
+        g.items.forEach(item => {
+          const row = el("div", undefined, "guide-item");
+          const head = el("div", undefined, "guide-head");
+          head.appendChild(el("strong", item.title));
+          if (item.writes) head.appendChild(el("span", "creates a profile in Questlight", "tag"));
+          row.appendChild(head);
+          row.appendChild(el("p", item.does));
+          const tryLine = el("p", undefined, "try");
+          tryLine.append("Try: ", el("em", item.try));
+          row.appendChild(tryLine);
+          row.appendChild(el("p", "Tool: " + item.tools.join(", "), "tech"));
+          box.appendChild(row);
+        });
+      });
+      const bubble = addBot(box);
+      bubble.parentElement.scrollIntoView({ block: "start" });
+    }
+
+    async function run(file) {
+      addUser(fileLine(file));
+      const working = el("div", undefined, "working");
+      working.append(el("div", undefined, "spin"), el("span", "Reading the resume… this can take up to a minute"));
+      const bubble = addBot(working);
+      setBusy(true);
+
+      let r;
+      try {
+        const body = new FormData();
+        body.append("file", file);
+        const resp = await fetch("/api/process", { method: "POST", body });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        r = await resp.json();
+      } catch (err) {
+        r = { ok: false, error: "couldn't reach the server (" + err.message + ")" };
+      }
+      bubble.replaceChildren(r.ok ? resultView(r, file) : errorView(r, file));
+      setBusy(false);
+      bubble.parentElement.scrollIntoView({ block: "start" });   // a long result starts at its top, not its bottom
+    }
+
+    function traceBlock(parent, trace) {
+      if (!trace || !trace.spans || !trace.spans.length) return;
+      const d = el("details");
+      d.appendChild(el("summary", "Steps: " + TraceView.summaryText(trace)));
+      TraceView.render(d, trace);
+      const link = el("p", undefined, "reason");
+      const a = el("a", "Open this trace");
+      a.href = "/trace?id=" + encodeURIComponent(trace.trace_id);
+      link.appendChild(a);
+      d.appendChild(link);
+      parent.appendChild(d);
+    }
+
+    function errorView(r, file) {
+      const box = el("div");
+      box.appendChild(el("div", `${file.name}: ${r.error}`, "err"));
+      traceBlock(box, r.trace);
+      return box;
+    }
+
+    function badge(textContent, kind) { return el("div", textContent, "badge " + kind); }
+
+    function resultView(r, file) {
+      const box = el("div");
+      const labels = { accepted: "Accepted as a resume", junk: "Junk: discarded", needs_review: "Needs recruiter review" };
+      box.append(badge(labels[r.decision] || r.decision, r.decision), el("p", r.reason, "reason"));
+
+      if (r.profile) {
+        const names = { created: "Profile created in Questlight", duplicate: "Profile already exists in Questlight",
+          not_created: "Profile not created: required information missing", skipped: "Profile not created", failed: "Profile creation failed" };
+        const kinds = { created: "accepted", duplicate: "needs_review", not_created: "needs_review", skipped: "needs_review", failed: "junk" };
+        box.appendChild(badge(names[r.profile.status] || r.profile.status, kinds[r.profile.status] || "needs_review"));
+        box.appendChild(el("p", r.profile.message + (r.profile.applicantId ? " (" + r.profile.applicantId + ")" : ""), "reason"));
+      }
+
+      if (r.roles) {
+        const names = { ok: "Best matching open roles", no_strong_match: "No strong match among the open roles", failed: "Role matching failed" };
+        const kinds = { ok: "accepted", no_strong_match: "needs_review", failed: "junk" };
+        box.appendChild(badge(names[r.roles.status] || r.roles.status, kinds[r.roles.status] || "needs_review"));
+        box.appendChild(el("p", r.roles.message, "reason"));
+        if (r.roles.matches.length) {
+          const table = el("table", undefined, "roles");
+          const head = el("tr");
+          ["#", "Role", "Score", "Skills matched", "Skills missing", "Experience"].forEach(h => head.appendChild(el("th", h)));
+          table.appendChild(head);
+          r.roles.matches.forEach((m, i) => {
+            const role = el("td", m.title);
+            role.appendChild(el("div", [m.jobId, m.location].filter(Boolean).join(" · "), "small"));
+            const tr = el("tr");
+            tr.append(el("td", String(i + 1)), role, el("td", String(m.score)),
+              el("td", m.matchedSkills.join(", ") || "none"), el("td", m.missingSkills.join(", ") || "none"), el("td", m.experience));
+            table.appendChild(tr);
+          });
+          const wrap = el("div", undefined, "tbl");
+          wrap.appendChild(table);
+          box.appendChild(wrap);
+        }
+      }
+
+      if (r.missing_fields.length) {
+        box.appendChild(el("div", "Required but missing: " + r.missing_fields.join(", ") +
+          ". The candidate needs to provide this before a profile can be created.", "note"));
+      }
+      if (r.missing_recommended.length) {
+        box.appendChild(el("div", "Also missing (not required, but useful): " + r.missing_recommended.join(", "), "note"));
+      }
+
+      traceBlock(box, r.trace);
+      if (r.redacted) {
+        const d = el("details");
+        d.append(el("summary", r.masking ? "Redacted JSON" : "Parsed JSON"), el("pre", JSON.stringify(r.redacted, null, 2)));
+        box.appendChild(d);
+      }
+      if (r.masked_pdf_b64) {
+        const bytes = Uint8Array.from(atob(r.masked_pdf_b64), c => c.charCodeAt(0));
+        const a = el("a", "Download masked PDF");
+        a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+        a.download = "masked_" + file.name.replace(/\.[^.]+$/, "") + ".pdf";
+        const p = el("p"); p.appendChild(a); box.appendChild(p);
+      }
+      if (r.warning) box.appendChild(el("div", r.warning, "note"));
+      return box;
+    }
+  </script>
+</body>
+</html>

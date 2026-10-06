@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# Only to regenerate the junk-rule test files (python tests/fixtures/junk/generate.py). The tests themselves need nothing extra.
+python-docx>=1.1
+reportlab>=4
+pillow>=10

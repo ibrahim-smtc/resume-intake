@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Resume Intake</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #fff; color: #1a1a1a;
+      font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    main { min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 24px 16px; }
+    main.has-result { justify-content: flex-start; padding-top: 48px; }
+
+    button { font: inherit; font-size: 16px; font-weight: 600; color: #fff; background: #111;
+      border: 0; border-radius: 8px; padding: 14px 28px; cursor: pointer; }
+    button:hover { background: #333; }
+    button:disabled { background: #999; cursor: default; }
+    button:focus-visible { outline: 3px solid #7aa7ff; outline-offset: 2px; }
+
+    #status { margin-top: 20px; font-size: 14px; color: #555; min-height: 20px; text-align: center; }
+    #status.error { color: #a12a2a; }
+    #result { width: 100%; max-width: 760px; }
+    .note { margin-top: 12px; font-size: 13px; color: #8a5a00; }
+    a { color: #1a56db; }
+    .badge { display: inline-block; margin-top: 14px; padding: 6px 12px; border-radius: 6px; font-size: 14px; font-weight: 600; }
+    .badge.accepted { background: #e3f4e6; color: #17612b; }
+    .badge.junk { background: #fbe4e4; color: #8f2020; }
+    .badge.needs_review { background: #fff1d6; color: #7a5200; }
+    table.roles { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 13px; }
+    table.roles th, table.roles td { text-align: left; padding: 8px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+    table.roles th { color: #555; font-weight: 600; }
+    table.roles .sub { color: #888; font-size: 12px; margin-top: 2px; }
+    .footer { margin: 32px 0 0; font-size: 13px; }
+    .reason { margin: 8px 0 0; font-size: 14px; color: #444; }
+    pre { margin: 12px 0 0; padding: 14px; background: #f6f6f6; border-radius: 6px; font-size: 12px;
+      line-height: 1.45; overflow: auto; max-height: 520px; white-space: pre-wrap; word-break: break-word; }
+    h2 { margin: 24px 0 0; font-size: 14px; font-weight: 600; color: #444; }
+  </style>
+</head>
+<body>
+  <main id="main">
+    <input id="picker" type="file" accept=".pdf,.docx" hidden>
+    <button id="pick" type="button">Upload resume</button>
+    <div id="status" aria-live="polite"></div>
+    <div id="result"></div>
+    <p class="footer"><a href="/log">Audit log</a> &nbsp;·&nbsp; <a href="/trace">Traces</a></p>
+  </main>
+
+  <script src="/static/trace-view.js"></script>
+  <script>
+    const main = document.getElementById("main");
+    const picker = document.getElementById("picker");
+    const pickBtn = document.getElementById("pick");
+    const status = document.getElementById("status");
+    const result = document.getElementById("result");
+
+    pickBtn.addEventListener("click", () => picker.click());
+    picker.addEventListener("change", () => {
+      const file = picker.files[0];
+      picker.value = "";
+      if (file) run(file);
+    });
+
+    function el(tag, text) {
+      const node = document.createElement(tag);
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function showTrace(trace) {
+      if (!trace || !trace.spans || !trace.spans.length) return;
+      result.appendChild(el("h2", "Steps: time and tokens"));
+      const line = el("p", TraceView.summaryText(trace) + " · ");
+      line.className = "reason";
+      const link = el("a", "open trace");
+      link.href = "/trace?id=" + encodeURIComponent(trace.trace_id);
+      line.appendChild(link);
+      result.appendChild(line);
+      TraceView.render(result, trace);
+    }
+
+    function maskedLink(b64, name) {
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      const a = el("a", "Download masked PDF");
+      a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      a.download = "masked_" + name.replace(/\.[^.]+$/, "") + ".pdf";
+      return a;
+    }
+
+    async function run(file) {
+      pickBtn.disabled = true;
+      main.classList.add("has-result");
+      result.replaceChildren();
+      status.className = "";
+      status.textContent = `Reading ${file.name}… this can take up to a minute`;
+
+      let r;
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const resp = await fetch("/api/process", { method: "POST", body: form });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        r = await resp.json();
+      } catch (err) {
+        r = { ok: false, error: "couldn't reach the server (" + err.message + ")" };
+      }
+
+      if (!r.ok) {
+        status.className = "error";
+        status.textContent = `${file.name}: ${r.error}`;
+        showTrace(r.trace);
+      } else {
+        status.textContent = `Done: ${file.name}`;
+        const labels = { accepted: "Accepted as a resume", junk: "Junk: discarded", needs_review: "Needs recruiter review" };
+        const badge = el("div", labels[r.decision] || r.decision);
+        badge.className = "badge " + r.decision;
+        result.appendChild(badge);
+        result.appendChild(el("p", r.reason)).className = "reason";
+        if (r.profile) {
+          const pl = { created: "Profile created in Questlight", duplicate: "Profile already exists in Questlight",
+            not_created: "Profile not created: required information missing", skipped: "Profile not created",
+            failed: "Profile creation failed" };
+          const pc = { created: "accepted", duplicate: "needs_review", not_created: "needs_review",
+            skipped: "needs_review", failed: "junk" };
+          const pb = el("div", pl[r.profile.status] || r.profile.status);
+          pb.className = "badge " + (pc[r.profile.status] || "needs_review");
+          result.appendChild(pb);
+          let detail = r.profile.message;
+          if (r.profile.applicantId) detail += " (" + r.profile.applicantId + ")";
+          result.appendChild(el("p", detail)).className = "reason";
+        }
+        if (r.roles) {
+          const rb = el("div", { ok: "Best matching open roles", no_strong_match: "No strong match among the open roles",
+            failed: "Role matching failed" }[r.roles.status] || r.roles.status);
+          rb.className = "badge " + ({ ok: "accepted", no_strong_match: "needs_review", failed: "junk" }[r.roles.status] || "needs_review");
+          result.appendChild(rb);
+          result.appendChild(el("p", r.roles.message)).className = "reason";
+          if (r.roles.matches.length) {
+            const table = el("table"); table.className = "roles";
+            const head = el("tr");
+            ["#", "Role", "Score", "Skills matched", "Skills missing", "Experience"].forEach(h => head.appendChild(el("th", h)));
+            table.appendChild(head);
+            r.roles.matches.forEach((m, i) => {
+              const tr = el("tr");
+              const role = el("td", m.title); role.appendChild(el("div", [m.jobId, m.location].filter(Boolean).join(" · "))).className = "sub";
+              tr.append(el("td", String(i + 1)), role, el("td", String(m.score)),
+                el("td", m.matchedSkills.join(", ") || "none"), el("td", m.missingSkills.join(", ") || "none"), el("td", m.experience));
+              table.appendChild(tr);
+            });
+            result.appendChild(table);
+          }
+        }
+        if (r.missing_fields.length) {
+          result.appendChild(el("div", "Required but missing: " + r.missing_fields.join(", ") +
+            ". The candidate needs to provide this before a profile can be created.")).className = "note";
+        }
+        if (r.missing_recommended.length) {
+          result.appendChild(el("div", "Also missing (not required, but useful): " + r.missing_recommended.join(", "))).className = "note";
+        }
+        showTrace(r.trace);
+        if (r.redacted) {
+          result.appendChild(el("h2", r.masking ? "Redacted JSON" : "Parsed JSON"));
+          result.appendChild(el("pre", JSON.stringify(r.redacted, null, 2)));
+        }
+        if (r.masked_pdf_b64) {
+          const p = el("p"); p.appendChild(maskedLink(r.masked_pdf_b64, file.name)); result.appendChild(p);
+        }
+        if (r.warning) result.appendChild(el("div", r.warning)).className = "note";
+      }
+      pickBtn.disabled = false;
+    }
+  </script>
+</body>
+</html>
