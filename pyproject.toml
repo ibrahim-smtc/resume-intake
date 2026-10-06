@@ -1,4 +1,23 @@
-# Tells Vercel where the app is. Dependencies are in requirements.txt.
+# Vercel installs the app from this file (it takes the dependencies from here, not from requirements.txt), and
+# [tool.vercel] tells it where the app is. requirements.txt repeats the same list for plain pip; a test checks they match.
+[project]
+name = "resume-intake"
+version = "0.1.0"
+description = "AI resume intake agent for Questlight, with a Perfox agent front end"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30",              # only for running locally (python run.py); Vercel runs the app itself
+    "httpx>=0.28,<1",
+    "python-multipart>=0.0.20",   # file uploads
+    "python-dotenv>=1.0",         # reads .env locally
+    "pypdf>=6",                   # reads the text of a PDF
+    "mcp>=1.29,<2",               # the MCP server SDK; 2.x changes its API
+]
+
+[tool.uv]
+package = false   # an application, not a library: nothing to build or install, only its dependencies
+
 [tool.vercel]
 entrypoint = "app.main:app"
 
