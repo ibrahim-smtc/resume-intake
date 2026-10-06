@@ -42,6 +42,12 @@ def classic():
     return _page("classic.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    """Browsers ask for this by default, whatever the page links to."""
+    return FileResponse(settings.STATIC_DIR / "favicon.ico", media_type="image/x-icon")
+
+
 @app.get("/log", include_in_schema=False)
 def log_page():
     return _page("log.html")

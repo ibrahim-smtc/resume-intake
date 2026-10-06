@@ -21,6 +21,10 @@ AGENT = {"Authorization": "Bearer agent-token", "Accept": "application/json"}
 with TestClient(app) as client:
     # ---- running locally, no password ----
     check("local: the pages and APIs are open", all(client.get(p).status_code == 200 for p in ("/", "/log", "/trace", "/api/config", "/api/log", "/static/trace-view.js")))
+    icon = client.get("/favicon.ico")
+    check("the favicon is served at /favicon.ico, and as SVG and touch icon", icon.status_code == 200 and icon.headers["content-type"] == "image/x-icon" and icon.content[:4] == b"\x00\x00\x01\x00"
+          and client.get("/static/favicon.svg").status_code == 200 and client.get("/static/apple-touch-icon.png").status_code == 200)
+    check("every page links the favicon", all('href="/static/favicon.svg"' in client.get(p).text for p in ("/", "/classic", "/log", "/trace")))
     check("the auto-generated API docs are switched off", all(client.get(p).status_code == 404 for p in ("/docs", "/redoc", "/openapi.json")))
     check("through a Cloudflare tunnel only /mcp is reachable",
           all(client.get(p, headers=TUNNEL).status_code == 404 for p in ("/", "/log", "/api/log", "/api/config", "/static/trace-view.js", "/classic"))
