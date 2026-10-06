@@ -13,13 +13,20 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+SCRIPT_TIMEOUT_S = 300
 failed = []
 total_checks = 0
 
 print(f"{'script':28} {'result':22} time")
 for script in sorted(HERE.glob("test_*.py")):
     started = time.time()
-    run = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, cwd=HERE.parent, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    try:
+        run = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, cwd=HERE.parent,
+                             env={**os.environ, "PYTHONIOENCODING": "utf-8"}, timeout=SCRIPT_TIMEOUT_S)
+    except subprocess.TimeoutExpired as exc:  # a stuck script must not stall the whole run
+        failed.append((script.name, f"TIMED OUT after {SCRIPT_TIMEOUT_S}s\n" + str(exc.stdout or "")[-2000:]))
+        print(f"{script.name:28} {'TIMED OUT':22} {time.time() - started:4.1f}s", flush=True)
+        continue
     out = run.stdout + run.stderr
     summary = re.findall(r"(\d+)/(\d+) checks passed", out)
     if run.returncode == 0 and summary:
@@ -31,7 +38,7 @@ for script in sorted(HERE.glob("test_*.py")):
     else:
         result = "FAILED"
         failed.append((script.name, out))
-    print(f"{script.name:28} {result:22} {time.time() - started:4.1f}s")
+    print(f"{script.name:28} {result:22} {time.time() - started:4.1f}s", flush=True)
 
 for name, out in failed:
     print(f"\n===== {name} =====")
