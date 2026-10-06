@@ -45,12 +45,12 @@ experience experienced years year strong good knowledge skills skill ability res
 _cache = {"at": 0.0, "jobs": []}
 
 
-def _plain(text) -> str:
+def plain(text) -> str:
     return html.unescape(re.sub(r"<[^>]+>", " ", str(text or "")))
 
 
-def _words(text) -> list:
-    return [w for w in re.findall(r"[a-z0-9][a-z0-9+#.]*", _plain(text).lower().replace(" ", " "))
+def words(text) -> list:
+    return [w for w in re.findall(r"[a-z0-9][a-z0-9+#.]*", plain(text).lower().replace(" ", " "))
             if len(w) > 1 and w not in STOP]
 
 
@@ -120,7 +120,7 @@ TITLE_SAME = {"engineer": "developer", "programmer": "developer", "coder": "deve
 
 
 def _title_words(text) -> set:
-    return {TITLE_SAME.get(w, w) for w in _words(text)} - {"senior", "junior", "lead", "associate"}
+    return {TITLE_SAME.get(w, w) for w in words(text)} - {"senior", "junior", "lead", "associate"}
 
 
 def _title(job: dict, titles: list) -> float:
@@ -160,26 +160,31 @@ def _degree(job: dict, degrees: list) -> float:
 
 def _location(job: dict, address: str) -> float:
     # some jobs store numeric codes instead of place names; those can't be compared
-    where = {w for w in _words(" ".join(str(job.get(k) or "") for k in ("city", "state", "workLocation")))
+    where = {w for w in words(" ".join(str(job.get(k) or "") for k in ("city", "state", "workLocation")))
              if not w.isdigit()} - {"india"}
     if not where:
         return 0.5
-    mine = set(_words(address)) - {"india"}
+    mine = set(words(address)) - {"india"}
     if not mine:
         return 0.5
     return 1.0 if where & mine else 0.0
 
 
-class _Text:
-    """TF-IDF over the open jobs, so words that appear in every job ("team", "development") count for little."""
+def job_text(job: dict):
+    """A job as text for the index: (its words with the title counted 3 times, how many words it says apart from the title)."""
+    body = " ".join([" ".join(map(str, job.get("primarySkills") or [])), plain(job.get("jobSummary")),
+                     plain(job.get("additionalDetails"))])
+    return Counter(words(" ".join([str(job.get("jobPositionTitle") or "")] * 3 + [body]))), len(words(body))
 
-    def __init__(self, jobs: list):
-        self.docs, self.sizes = [], []
-        for j in jobs:
-            body = " ".join([" ".join(map(str, j.get("primarySkills") or [])), _plain(j.get("jobSummary")),
-                             _plain(j.get("additionalDetails"))])
-            self.sizes.append(len(_words(body)))  # how much the job actually says, apart from its title
-            self.docs.append(Counter(_words(" ".join([str(j.get("jobPositionTitle") or "")] * 3 + [body]))))
+
+class TextIndex:
+    """TF-IDF over a set of documents (the open jobs, or the candidates), so words that appear in nearly every document
+    ("team", "development") count for little. docs: (word counts, size) pairs; size is how much the document actually
+    says apart from its title, because a one-line document can't match on text."""
+
+    def __init__(self, docs: list):
+        self.docs = [d for d, _ in docs]
+        self.sizes = [size for _, size in docs]
         df = Counter(w for d in self.docs for w in d)
         n = len(self.docs)
         self.idf = {w: math.log((1 + n) / (1 + c)) + 1 for w, c in df.items()}
@@ -197,6 +202,35 @@ class _Text:
             yield cosine * min(1.0, size / THIN_TEXT_WORDS)  # a job with a one-line description can't match on text
 
 
+def score_fit(job: dict, text_sim: float, haystack: str, years: float, titles: list, degrees: list, address: str) -> dict:
+    """How well one candidate fits one job, 0-100, from the six parts. This is the whole scoring: resume -> jobs (rank below)
+    and job -> candidates (candidates.py) both call it. text_sim is the TF-IDF similarity from a TextIndex; haystack is the
+    candidate's lower-cased text and skills."""
+    s_skills, matched, missing = _skills(job, haystack)
+    s_exp, exp_note = _experience(job, years)
+    parts = {"skills": s_skills, "text": min(1.0, text_sim / TEXT_FULL), "title": _title(job, titles),
+             "experience": s_exp, "degree": _degree(job, degrees), "location": _location(job, address)}
+    return {"score": round(sum(WEIGHTS[k] * v for k, v in parts.items()), 1), "matchedSkills": matched, "missingSkills": missing,
+            "experience": exp_note, "parts": {k: round(v * WEIGHTS[k], 1) for k, v in parts.items()}}
+
+
+def find_job(ref: str, jobs: list):
+    """Finds the one open job a recruiter means, by its job ID (JOB-...), its long ID or its title. Returns (job, choices):
+    the job when exactly one fits, else None with the jobs that fit (empty when nothing does, so the recruiter can pick)."""
+    want = " ".join(str(ref or "").lower().split())
+    if not want:
+        return None, []
+    for j in jobs:
+        if want in (str(j.get("jobId") or "").lower(), str(j.get("_id") or "").lower()):
+            return j, []
+    title = lambda j: " ".join(str(j.get("jobPositionTitle") or "").lower().split())
+    same = [j for j in jobs if title(j) == want]
+    if len(same) == 1:
+        return same[0], []
+    found = same or [j for j in jobs if all(_has_phrase(title(j), w) for w in want.split())]
+    return (found[0], []) if len(found) == 1 else (None, found)
+
+
 # ---------- the block ----------
 
 def rank(jobs: list, parsed: dict, resume_text: str, top_n: int = TOP_N) -> list:
@@ -208,19 +242,13 @@ def rank(jobs: list, parsed: dict, resume_text: str, top_n: int = TOP_N) -> list
     titles = [j.get("jobTitle") for j in (parsed.get("workExperience") or [])[:3] if j.get("jobTitle")]
     degrees = [e.get("degree") for e in parsed.get("education") or [] if e.get("degree")]
     address = str(parsed.get("address") or "")
-    sims = list(_Text(jobs).similarity(Counter(_words(resume_text))))
+    sims = list(TextIndex([job_text(j) for j in jobs]).similarity(Counter(words(resume_text))))
 
     scored = []
     for job, sim in zip(jobs, sims):
-        s_skills, matched, missing = _skills(job, haystack)
-        s_exp, exp_note = _experience(job, years)
-        parts = {"skills": s_skills, "text": min(1.0, sim / TEXT_FULL), "title": _title(job, titles),
-                 "experience": s_exp, "degree": _degree(job, degrees), "location": _location(job, address)}
-        total = sum(WEIGHTS[k] * v for k, v in parts.items())
+        fit = score_fit(job, sim, haystack, years, titles, degrees, address)
         scored.append({"jobId": job.get("jobId"), "id": job.get("_id"), "title": str(job.get("jobPositionTitle") or "").strip(),
-                       "score": round(total, 1), "matchedSkills": matched, "missingSkills": missing,
-                       "experience": exp_note, "parts": {k: round(v * WEIGHTS[k], 1) for k, v in parts.items()},
-                       "location": ", ".join(str(job[k]) for k in ("city", "state") if job.get(k) and not str(job[k]).isdigit())})
+                       **fit, "location": ", ".join(str(job[k]) for k in ("city", "state") if job.get(k) and not str(job[k]).isdigit())})
     scored.sort(key=lambda m: m["score"], reverse=True)
     return scored[:top_n]
 

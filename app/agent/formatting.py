@@ -25,7 +25,13 @@ def candidate(parsed):
 def top_roles(roles):
     return [{"title": m["title"], "job_id": m["jobId"], "score": m["score"], "location": m["location"],
              "matched_skills": m["matchedSkills"][:8], "missing_skills": m["missingSkills"][:8],
-             "experience": m["experience"]} for m in (roles or {}).get("matches") or []]
+             "experience": m["experience"], "screening": (m.get("screening") or {}).get("status")}
+            for m in (roles or {}).get("matches") or []]
+
+
+def screening(roles):
+    """Whether the candidate was put on the top jobs at the Screening stage: {status, message}, or None (not applicable)."""
+    return (roles or {}).get("screening")
 
 
 def profile_view(profile: dict) -> dict:
@@ -62,7 +68,7 @@ def for_agent(result: dict) -> dict:
         "missing_recommended": result.get("missing_recommended") or [],
         "note": result.get("warning"),
         "roles_status": roles.get("status"), "roles_message": roles.get("message"), "top_roles": top_roles(roles),
-        "trace_id": (result.get("trace") or {}).get("trace_id"),
+        "screening": screening(roles), "trace_id": (result.get("trace") or {}).get("trace_id"),
     }
 
 
@@ -86,7 +92,7 @@ def status_of(intake: Intake) -> dict:
            "info_complete": not missing, "missing_required": missing, "missing_items": items,
            "missing_recommended": questlight.missing_recommended(checked["applicant"]) if checked else [],
            "note": None, "roles_status": roles.get("status"), "roles_message": roles.get("message"),
-           "top_roles": top_roles(roles), "file_id": intake.id}
+           "top_roles": top_roles(roles), "screening": screening(roles), "file_id": intake.id}
     hint = next_hint(profile.get("status"))
     if hint:
         out["next"] = hint

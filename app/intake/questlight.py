@@ -1,6 +1,7 @@
 """The "Load into Questlight" block: turns the parsed resume into a Questlight candidate profile.
 
-Calls POST {QUESTLIGHT_BASE_URL}/applicants/create-applicant (multipart: applicantData JSON + the resume file).
+Calls POST {QUESTLIGHT_BASE_URL}/applicants/create-applicant (multipart: applicantData JSON + the resume file), and
+POST /jobs/applicantMatching/create to put the new candidate on a job at the Screening stage (add_to_screening).
 Hardcoded rules only, no model. The API needs a Bearer JWT with the PROFILE:CREATE permission; see .env.example.
 
 Required by the API: name, email, skills (non-empty), workExperience and education. When any is missing the
@@ -278,6 +279,43 @@ async def create_profile(applicant: dict, name: str, data: bytes, ext: str) -> d
         if result["status"] == "failed":
             s.fail(result["message"])
     return result
+
+
+async def add_to_screening(applicant_id: str, job_id: str) -> dict:
+    """Puts a candidate on a job at the SCREENING stage (status ONGOING): POST /jobs/applicantMatching/create. Both IDs are
+    the long UUIDs (the `_id` fields), not the readable CAN-... / JOB-... codes.
+    Returns {"status": screened | already | skipped | failed, "message"}."""
+    headers = auth_headers()
+    if not headers:
+        return {"status": "skipped", "message": "QUESTLIGHT_TOKEN is not set"}
+    body = {"applicantId": applicant_id, "jobId": job_id, "stages": "SCREENING", "status": "ONGOING"}
+    with tracing.span("POST applicantMatching/create") as s:
+        result = await _send_screening(headers, body)
+        s.set(outcome=result["status"])
+        if result["status"] == "failed":
+            s.fail(result["message"])
+    return result
+
+
+async def _send_screening(headers: dict, body: dict) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_S)) as client:
+            resp = await client.post(f"{api_base()}/jobs/applicantMatching/create", headers=headers, json=body)
+    except httpx.TimeoutException:
+        return {"status": "failed", "message": f"Questlight didn't answer within {TIMEOUT_S}s, so it is unknown whether this went through"}
+    except httpx.HTTPError as exc:
+        return {"status": "failed", "message": f"couldn't reach Questlight ({type(exc).__name__}: {exc or 'no detail'})"}
+    code = resp.status_code
+    tracing.current().set(http_status=code)
+    if code in (200, 201):
+        return {"status": "screened", "message": "added to the job at the Screening stage"}
+    if code == 409:
+        return {"status": "already", "message": "the candidate is already on this job"}
+    if code == 401:
+        return {"status": "failed", "message": "Questlight rejected the token (tokens last 10 days): get a new one and update QUESTLIGHT_TOKEN"}
+    if code == 403:
+        return {"status": "failed", "message": "Questlight refused: the account may not add candidates to jobs, or this app's origin isn't allowed (try QUESTLIGHT_ORIGIN)"}
+    return {"status": "failed", "message": f"Questlight returned HTTP {code}: {_problem(resp)}"}
 
 
 async def _send_profile(headers: dict, parts: list) -> dict:

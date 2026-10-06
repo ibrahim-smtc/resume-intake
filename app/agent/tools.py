@@ -5,10 +5,13 @@
 - provide_missing_details: when a resume lacks something Questlight requires (a job title, say) the recruiter is asked,
   and this stores the answer on the server; create_profile then creates the profile. (A recruiter who says "go ahead
   without it" gets create_profile(fill_missing=true), which saves "Not specified".)
-- check_junk, parse_resume, create_profile, match_roles: the same blocks one at a time, for a recruiter who asks for
+- check_junk, parse_resume, create_profile, match_roles: the same blocks one at a time (match_roles also does the Screening
+  step after a strong match, as the pipeline does), for a recruiter who asks for
   just one step. The server keeps the file and the parsed resume between calls (see intakes.py), and the rules are
   checked here whatever order the agent calls them in: nothing is parsed unless the junk check accepted the file, no
   profile is created unless the parsed resume has every required detail, and matching needs a profile.
+- find_candidates_for_job, add_candidates_to_job: the other direction. For an open job, rank the candidates already in
+  Questlight (read-only); then, once the recruiter agrees, put chosen ones on the job at the Screening stage.
 - get_intake_summary, list_recent_intakes: read the audit log. list_open_roles: Questlight's open jobs.
 
 The text in each tool's docstring is what the agent reads. After changing one, click Rediscover on the integration in
@@ -21,7 +24,7 @@ from pathlib import Path
 from app import pipeline, settings
 from app.agent import chat_bridge, downloads, formatting, intakes
 from app.agent.mcp_app import mcp
-from app.intake import corrections, matching, questlight
+from app.intake import candidates, corrections, matching, questlight
 from app.observability import audit, tracing
 
 CHANNEL = "perfox agent"  # the audit log's channel column for files that came in through the agent
@@ -49,7 +52,8 @@ async def process_resume(file_url: str, file_name: str = "") -> dict:
 
     Pass the URL of the uploaded file exactly as received (the attachment URL), and its file name if known.
     This runs the whole intake in a fixed order: junk check, resume parsing, creating the candidate profile in
-    Questlight, then ranking Questlight's open jobs for the new candidate. Call it once per file. If you call it
+    Questlight, ranking Questlight's open jobs for the new candidate, then (for a strong match) putting the candidate on
+    the best 3 jobs at the Screening stage in Questlight. Call it once per file. If you call it
     again for the same attachment, it does NOT run again: it returns where that file stands now (so it is safe, and a
     way to get the file_id back). Only use the step tools (check_junk,
     parse_resume, create_profile, match_roles) when the recruiter asks for one specific step.
@@ -70,6 +74,8 @@ async def process_resume(file_url: str, file_name: str = "") -> dict:
       means that job was saved with the title "Not specified"). If not empty, TELL the recruiter, in plain words.
     - info_complete and missing_required: the fields the resume lacks; missing_recommended: nice to have (phone).
     - top_roles: best matching open jobs with score 0-100 (under 40 means no strong match), matched and missing skills.
+    - screening: whether the candidate was added to those jobs at the Screening stage in Questlight (status "screened",
+      "partial", "failed" or "skipped", with a message). Tell the recruiter which jobs; if it failed, say so plainly.
     """
     token = _upload_token(file_url)
     earlier = intakes.find(file_url) if token else None
@@ -224,11 +230,14 @@ async def create_profile(file_id: str, fill_missing: bool = False) -> dict:
 @mcp.tool()
 async def match_roles(file_id: str) -> dict:
     """STEP 4 of 4: rank Questlight's open jobs for a candidate (best 3, score 0-100, under 40 = no strong match).
+    For a candidate whose profile was just created, a strong match also puts them on those 3 jobs at the Screening stage
+    in Questlight (see `screening` in the result); calling this again retries only the jobs that failed.
 
     file_id comes from the process_resume (or check_junk) result; if you no longer have it, pass the attachment's
     file_url instead (a candidate whose resume was taken in with process_resume can be matched at any time within 30
     minutes, no profile step needed). The candidate must have been parsed and have a Questlight profile (just created by
-    create_profile, or one that already existed: status "duplicate"). Refuses otherwise. Read-only."""
+    create_profile, or one that already existed: status "duplicate"). Refuses otherwise. THIS WRITES TO QUESTLIGHT only
+    for a newly created profile (the Screening step); for an existing profile it is read-only."""
     intake, err = intakes.lookup(file_id)
     if err:
         return {"ok": False, "error": err}
@@ -238,8 +247,96 @@ async def match_roles(file_id: str) -> dict:
     async with _traced(intake.run, "match_roles") as trace:
         if intake.roles is None or intake.roles["status"] == "failed":
             intake.roles = await pipeline.match_open_roles(intake.run, intake.parsed, intake.text, intake.profile, allow_existing=True)
+        elif (intake.roles.get("screening") or {}).get("status") in ("failed", "partial"):
+            await pipeline.screen_top_roles(intake.run, intake.profile, intake.roles)  # retries only the jobs that failed
     return {"ok": True, "file_id": intake.id, "roles_status": intake.roles["status"],
-            "roles_message": intake.roles["message"], "top_roles": formatting.top_roles(intake.roles), "trace_id": trace.id}
+            "roles_message": intake.roles["message"], "top_roles": formatting.top_roles(intake.roles),
+            "screening": formatting.screening(intake.roles), "trace_id": trace.id}
+
+
+async def _resolve_job(ref: str):
+    """The one open job the recruiter means. Returns (job, None), or (None, the tool result to hand back instead)."""
+    jobs, err = await matching.fetch_open_jobs()
+    if err:
+        return None, {"ok": False, "error": err}
+    job, choices = matching.find_job(ref, jobs)
+    if job:
+        return job, None
+    if choices:
+        return None, {"ok": True, "needs_choice": True, "matching_jobs": len(choices),
+                      "message": "more than one open job fits: ask the recruiter which one, then call again with its job_id",
+                      "jobs": [_job_line(j) for j in choices[:10]]}
+    return None, {"ok": False, "error": "no open job matches that (only open jobs can be used): list_open_roles(search) finds them"}
+
+
+def _job_line(job: dict) -> dict:
+    return {"title": str(job.get("jobPositionTitle") or "").strip(), "job_id": job.get("jobId"),
+            "location": ", ".join(str(job[k]) for k in ("city", "state") if job.get(k) and not str(job[k]).isdigit())}
+
+
+@mcp.tool()
+async def find_candidates_for_job(job: str, top_k: int = 3) -> dict:
+    """Which candidates already in Questlight fit an open job best? Read-only: nothing is written.
+
+    job is the job ID (like JOB-020926-00005) or its title. A title that fits several open jobs returns needs_choice
+    with the list: ask the recruiter which one, then call again with that job_id. top_k is how many to return (default 3,
+    max 10). Candidates already hired or in onboarding are left out. Scoring is by rules (skills, experience, title,
+    degree, location), not by you: report the scores as given, 0-100 (under 40 means no strong candidate), with the
+    matched and missing skills. The first call takes a few seconds; later ones are quick.
+    LIMIT: Questlight gives no way to see who is already on this job, so tell the recruiter a suggested candidate may
+    already be on it. Do NOT add anyone to the job from here: only after the recruiter says yes to adding them, call
+    add_candidates_to_job."""
+    found, other = await _resolve_job(job)
+    if other:
+        return other
+    run = audit.Run(f"job {found.get('jobId')}", b"", CHANNEL)
+    async with _traced(run, "find_candidates_for_job") as trace:
+        result = await candidates.find_for_job(found, top_k)
+    run.log("find_candidates", result["status"], result["message"], record_id=found.get("jobId"),
+            considered=result["considered"], top=[{"candidate": c["code"], "score": c["score"]} for c in result["candidates"]])
+    if result["status"] == "failed":
+        return {"ok": False, "job": _job_line(found), "error": result["message"], "trace_id": trace.id}
+    return {"ok": True, "job": _job_line(found), "status": result["status"], "message": result["message"],
+            "considered": result["considered"], "left_out_hired_or_onboarding": result["left_out"],
+            "candidates": [{"name": c["name"], "candidate_id": c["code"], "score": c["score"], "status": c["status"],
+                            "location": c["location"], "experience": c["experience"],
+                            "matched_skills": c["matchedSkills"][:8], "missing_skills": c["missingSkills"][:8]}
+                           for c in result["candidates"]],
+            "note": "Questlight can't show who is already on this job, so a suggested candidate may already be on it.",
+            "next": "to put them on this job at the Screening stage, ask the recruiter first, then add_candidates_to_job",
+            "trace_id": trace.id}
+
+
+@mcp.tool()
+async def add_candidates_to_job(job: str, candidate_ids: list[str]) -> dict:
+    """Put candidates on an open job at the Screening stage in Questlight (status Ongoing). THIS WRITES TO QUESTLIGHT.
+
+    ONLY call this after the recruiter has seen the candidates and clearly said to add them, and only with the IDs
+    they chose. job is the job ID (or an unambiguous title); candidate_ids are candidate IDs (like CAN-061026-00003) from
+    find_candidates_for_job, at most 10 per call. Anyone who is hired or in onboarding, or unknown, is refused. A
+    candidate already on the job counts as done. Returns each candidate's result: "screened", "already", "failed",
+    "refused" or "not_found". Tell the recruiter the outcome for each one, plainly."""
+    ids = [str(c) for c in candidate_ids] if isinstance(candidate_ids, list) else []
+    if not ids:
+        return {"ok": False, "error": "no candidate IDs given"}
+    if len(ids) > candidates.MAX_ADD:
+        return {"ok": False, "error": f"at most {candidates.MAX_ADD} candidates per call"}
+    found, other = await _resolve_job(job)
+    if other:
+        return other
+    people, err = await candidates.fetch_candidates()
+    if err:
+        return {"ok": False, "error": err}
+    chosen, problems = candidates.pick(ids, people)
+    run = audit.Run(f"job {found.get('jobId')}", b"", CHANNEL)
+    async with _traced(run, "add_candidates_to_job") as trace:
+        with tracing.span("add candidates to screening"):
+            results = problems + await candidates.add_to_job(found, chosen)
+    done = [r for r in results if r["status"] in ("screened", "already")]
+    status = "screened" if len(done) == len(results) else "partial" if done else "failed"
+    run.log("add_to_screening", status, f"{len(done)} of {len(results)} candidates are on the job at the Screening stage",
+            record_id=found.get("jobId"), candidates=[{"candidate": r["candidate"], "status": r["status"]} for r in results])
+    return {"ok": True, "job": _job_line(found), "status": status, "results": results, "trace_id": trace.id}
 
 
 @mcp.tool()
@@ -266,14 +363,17 @@ async def get_intake_summary(days: int = 1) -> dict:
     """Counts of resumes received over the last N days (1 = last 24 hours, 7 = last week, max 90), from the audit log.
 
     screening: accepted / junk / needs_review. profiles: created / duplicate / not_created (info missing) / failed.
-    matching: ok (a strong match found) / no_strong_match / failed. errors: files that could not be read or parsed.
+    matching: ok (a strong match found) / no_strong_match / failed. job_screening: screened / partial / failed / skipped
+    (candidates put on their top jobs at the Screening stage). added_to_jobs: how often recruiters added candidates to a
+    job themselves (screened / partial / failed). errors: files that could not be read or parsed.
     """
     days = max(1, min(int(days), 90))
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
     counts = audit.summary(since)
     return {"period": f"last {days} day(s)", "since_utc": since, "files_received": audit.run_count(since),
             "screening": counts.get("junk_check", {}), "profiles": counts.get("load_questlight", {}),
-            "matching": counts.get("match_roles", {}),
+            "matching": counts.get("match_roles", {}), "job_screening": counts.get("screen_top_roles", {}),
+            "added_to_jobs": counts.get("add_to_screening", {}),
             "errors": {step: n["error"] for step, n in counts.items() if "error" in n}}
 
 
@@ -285,4 +385,5 @@ async def list_recent_intakes(limit: int = 10) -> dict:
     return {"intakes": [{"received_utc": r["ts"], "file": r["file"], "channel": r["channel"],
                          "screening": r["steps"].get("junk_check", r["steps"].get("intake")),
                          "profile": r["steps"].get("load_questlight"), "matching": r["steps"].get("match_roles"),
+                         "job_screening": r["steps"].get("screen_top_roles"),
                          "candidate_id": r["record_id"], "note": r["last_reason"]} for r in runs]}

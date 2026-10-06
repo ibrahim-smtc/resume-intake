@@ -115,8 +115,9 @@ async def main():
 
 o = asyncio.run(main())
 tools = o["tools"]
-check("the agent sees the 9 tools", set(tools) == {"process_resume", "check_junk", "parse_resume", "provide_missing_details", "create_profile",
-                                                   "match_roles", "list_open_roles", "get_intake_summary", "list_recent_intakes"}, sorted(tools))
+check("the agent sees the 11 tools", set(tools) == {"process_resume", "check_junk", "parse_resume", "provide_missing_details", "create_profile",
+                                                   "match_roles", "list_open_roles", "get_intake_summary", "list_recent_intakes",
+                                                   "find_candidates_for_job", "add_candidates_to_job"}, sorted(tools))
 check("process_resume's schema needs a file_url", tools["process_resume"].inputSchema.get("required") == ["file_url"])
 check("tool descriptions don't promise a fixed file size", "5 MB" not in tools["process_resume"].description and "5 MB" not in tools["check_junk"].description)
 
@@ -150,6 +151,7 @@ check("create_profile creates once; repeating it returns the saved result and do
       o["create"]["profile_created"] and o["create2"]["profile"] == o["create"]["profile"] and o["creates_here"] == 1, o["creates_here"])
 check("answers can't be added once the profile exists", o["late_provide"]["ok"] is False and "already exists" in o["late_provide"]["error"])
 check("match_roles then returns scored roles", o["match"]["ok"] and o["match"]["roles_status"] in ("ok", "no_strong_match") and len(o["match"]["top_roles"]) >= 1)
+check("match_roles also reports the Screening step, in total and per job", "screening" in o["match"] and all("screening" in r for r in o["match"]["top_roles"]), o["match"])
 check("a junk file gets no handle", "file_id" not in o["junk_step"] and o["junk_step"]["decision"] == "junk")
 check("made-up references are refused by every step tool, saying what to pass instead",
       all(b["ok"] is False and "no file found" in b["error"] and "file_url" in b["error"] for b in o["bogus"]), o["bogus"])
@@ -163,7 +165,7 @@ check("an expired file_id is refused", o["expired"]["ok"] is False and "expired"
 conn = sqlite3.connect(os.environ["AUDIT_DB"])
 steps = [x[0] for x in conn.execute("SELECT step FROM audit_log WHERE run_id = ? ORDER BY id", (fid,))]
 conn.close()
-check("one run id for the step-by-step file: junk check, parse, load into Questlight, matching", steps == ["junk_check", "parse", "load_questlight", "match_roles"], steps)
+check("one run id for the step-by-step file: junk check, parse, load into Questlight, matching", steps[:4] == ["junk_check", "parse", "load_questlight", "match_roles"], steps)
 trace = tracing.get_trace(f"{fid}-parse_resume")
 check("each tool call has its own trace, id = run id + tool, readable with the file name", trace and trace["file"] == "Ananya.pdf" and "parse resume" in [x["name"] for x in trace["spans"]])
 check("recent traces list the step traces with the file name", any(x["trace_id"] == f"{fid}-check_junk" and x["file"] == "Ananya.pdf" for x in tracing.recent_traces(100)))

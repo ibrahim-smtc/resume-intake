@@ -26,9 +26,9 @@ check(f"all {len(real)} tools are listed", listed == real, (real, listed))
 check("every entry has a title, a plain description, an example and its tools",
       all(i["title"] and i["does"] and i["try"] and i["tools"] for g in tool_guide.TOOL_GUIDE for i in g["items"]))
 writers = {t for g in tool_guide.TOOL_GUIDE for i in g["items"] if i["writes"] for t in i["tools"]}
-check("the entries that write to Questlight are flagged", {"process_resume", "create_profile"} <= writers, writers)
+check("the entries that write to Questlight are flagged", {"process_resume", "create_profile", "match_roles"} <= writers, writers)
 check("read-only tools are NOT flagged as writing",
-      not ({"list_open_roles", "get_intake_summary", "check_junk", "parse_resume", "match_roles", "list_recent_intakes"} & writers), writers)
+      not ({"list_open_roles", "get_intake_summary", "check_junk", "parse_resume", "list_recent_intakes"} & writers), writers)
 
 client = TestClient(app)
 j = client.get("/api/tools").json()

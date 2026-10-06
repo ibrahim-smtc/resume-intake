@@ -42,6 +42,11 @@ async def create(request: Request):
     return JSONResponse({"data": {"_id": "u1", "applicantId": "CAN-051026-00099"}}, 201)
 
 
+@mock.post("/api/jobs/applicantMatching/create")
+async def screen():
+    return JSONResponse({"data": {}}, 201)
+
+
 @mock.get("/api/jobs/all")
 async def jobs_all():
     mock_state["jobs_calls"] += 1
@@ -71,14 +76,16 @@ r = upload("r01_standard.pdf")
 t = r["trace"]
 spans = {s["name"]: s for s in t["spans"]}
 expected = ["resume intake", "intake checks", "junk check", "parse resume", "load into Questlight", "POST create-applicant",
-            "match open roles", "fetch open jobs", "score jobs"]
+            "match open roles", "fetch open jobs", "score jobs", "screen top roles",
+            "POST applicantMatching/create", "POST applicantMatching/create", "POST applicantMatching/create"]
 check("steps in the right order", [s["name"] for s in t["spans"]] == expected, [s["name"] for s in t["spans"]])
 root = t["spans"][0]
 check("children hang under the right parents",
       spans["POST create-applicant"]["parent_id"] == spans["load into Questlight"]["id"]
       and spans["fetch open jobs"]["parent_id"] == spans["match open roles"]["id"]
       and spans["score jobs"]["parent_id"] == spans["match open roles"]["id"]
-      and all(spans[n]["parent_id"] == root["id"] for n in ("intake checks", "junk check", "parse resume", "load into Questlight", "match open roles")))
+      and all(spans[n]["parent_id"] == root["id"] for n in ("intake checks", "junk check", "parse resume", "load into Questlight", "match open roles", "screen top roles"))
+      and all(s["parent_id"] == spans["screen top roles"]["id"] for s in t["spans"] if s["name"] == "POST applicantMatching/create"))
 p = spans["parse resume"]
 check("parse is an llm step with the provider's token counts", p["kind"] == "llm" and p["input_tokens"] == 370 and p["output_tokens"] == 571
       and p["provider"] == "perfox" and p["model"] is None)
@@ -138,7 +145,7 @@ async def two_at_once():
 
 ta, tb = asyncio.run(two_at_once())
 check("parallel uploads: each trace has only its own steps",
-      len(ta["spans"]) == 9 and len(tb["spans"]) == 3 and ta["trace_id"] != tb["trace_id"]
+      len(ta["spans"]) == len(expected) and len(tb["spans"]) == 3 and ta["trace_id"] != tb["trace_id"]
       and not ({s["id"] for s in ta["spans"]} & {s["id"] for s in tb["spans"]}))
 
 # 7. no candidate data in the trace store

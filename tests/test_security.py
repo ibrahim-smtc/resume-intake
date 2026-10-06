@@ -31,7 +31,7 @@ with TestClient(app) as client:
           and client.post("/api/process", headers=TUNNEL, files={"file": ("x.pdf", b"x")}).status_code == 404
           and client.post("/api/chat", headers=TUNNEL, data={"message": "x"}).status_code == 404)
     r = client.post("/mcp", json=TOOLS_LIST, headers={**AGENT, **TUNNEL})
-    check("/mcp works through the tunnel with the token", r.status_code == 200 and len(r.json()["result"]["tools"]) == 9, r.text[:120])
+    check("/mcp works through the tunnel with the token", r.status_code == 200 and len(r.json()["result"]["tools"]) == 11, r.text[:120])
     check("/mcp refuses a missing or wrong token", client.post("/mcp", json=TOOLS_LIST).status_code == 401
           and client.post("/mcp", json=TOOLS_LIST, headers={"Authorization": "Bearer nope"}).status_code == 401)
 

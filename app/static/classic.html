@@ -153,6 +153,12 @@
             });
             result.appendChild(table);
           }
+          if (r.roles.screening) {
+            const sb = el("div", "Screening: " + r.roles.screening.status);
+            sb.className = "badge " + ({ screened: "accepted", partial: "needs_review", skipped: "needs_review", failed: "junk" }[r.roles.screening.status] || "needs_review");
+            result.appendChild(sb);
+            result.appendChild(el("p", r.roles.screening.message)).className = "reason";
+          }
         }
         if (r.missing_fields.length) {
           result.appendChild(el("div", "Required but missing: " + r.missing_fields.join(", ") +

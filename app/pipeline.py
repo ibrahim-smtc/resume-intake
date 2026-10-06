@@ -1,12 +1,13 @@
 """The intake pipeline: one resume in, one decision out. The BRD workflow blocks, in order:
 
-    intake checks -> "Junk?" -> parse -> "Load into Questlight" -> "Match open roles"
+    intake checks -> "Junk?" -> parse -> "Load into Questlight" -> "Match open roles" -> screen the top 3
 
 The blocks themselves are in app/intake (junk rules, the two parsers, the Questlight profile call, the job matching);
 this module runs them in order, writes the audit log and the trace as it goes, and shapes the result. The upload page, the
 Perfox agent's tools (app/agent) and the tests all call process_file() or the individual steps below.
 
-AI is used only to read the resume (the parser). Every other decision is plain code.
+AI is used only to read the resume (the parser). Every other decision is plain code, including which jobs the
+candidate is put on for screening: the best 3 matches, no more.
 """
 from pathlib import Path
 
@@ -152,7 +153,7 @@ async def load_into_questlight(run: audit.Run, data: bytes, ext: str, parsed: di
 async def match_open_roles(run: audit.Run, parsed: dict, text: str, profile: dict, allow_existing: bool = False):
     """The "Match open roles" block. In the pipeline it runs only for a candidate whose profile was just created in
     Questlight; allow_existing=True (the agent's match_roles tool, when a recruiter asks) also lets a candidate
-    whose profile already existed (a duplicate) through."""
+    whose profile already existed (a duplicate) through. A strong match ends with screen_top_roles (a new profile only)."""
     if profile["status"] != "created" and not (allow_existing and profile["status"] == "duplicate"):
         return None
     with tracing.span("match open roles") as s:
@@ -162,7 +163,43 @@ async def match_open_roles(run: audit.Run, parsed: dict, text: str, profile: dic
             s.fail(result["message"])
     run.log("match_roles", result["status"], result["message"], record_id=profile.get("applicantId"),
             open_jobs=result["open_jobs"], top=[{"jobId": m["jobId"], "score": m["score"]} for m in result["matches"]])
+    await screen_top_roles(run, profile, result)
     return result
+
+
+async def screen_top_roles(run: audit.Run, profile: dict, roles: dict):
+    """After matching: puts a candidate whose profile was just created on their best matching jobs (up to 3) at the Screening
+    stage in Questlight. The outcome is stored on roles["screening"] and on each match as m["screening"]. Runs only for a
+    new profile (an existing one has no ID here) and only when matching found a strong match. Safe to call again: jobs
+    already done are skipped and only the ones that failed are retried. Returns roles["screening"], or None when the
+    candidate is not a new profile or there are no matches."""
+    if profile.get("status") != "created" or not roles or not roles.get("matches"):
+        return None
+    with tracing.span("screen top roles") as s:
+        if roles["status"] != "ok":
+            roles["screening"] = {"status": "skipped", "message": "no strong match, so the candidate was not put on any job"}
+        elif not profile.get("id"):
+            roles["screening"] = {"status": "skipped", "message": "Questlight returned no ID for the new profile, so it can't be put on a job"}
+        else:
+            for m in roles["matches"][:matching.TOP_N]:
+                if (m.get("screening") or {}).get("status") not in ("screened", "already"):
+                    m["screening"] = await questlight.add_to_screening(profile["id"], m["id"])
+            done = [m for m in roles["matches"][:matching.TOP_N] if m["screening"]["status"] in ("screened", "already")]
+            titles = ", ".join(m["title"] for m in done)
+            first_error = next((m["screening"]["message"] for m in roles["matches"][:matching.TOP_N] if m["screening"]["status"] == "failed"), None)
+            if len(done) == len(roles["matches"][:matching.TOP_N]):
+                roles["screening"] = {"status": "screened", "message": f"added to the Screening stage of {len(done)} job(s): {titles}"}
+            elif done:
+                roles["screening"] = {"status": "partial", "message": f"added to the Screening stage of {titles}; the rest failed: {first_error}"}
+            else:
+                roles["screening"] = {"status": "failed", "message": f"could not add the candidate to any job: {first_error}"}
+        outcome = roles["screening"]
+        s.set(outcome=outcome["status"])
+        if outcome["status"] in ("failed", "partial"):
+            s.fail(outcome["message"])
+    run.log("screen_top_roles", outcome["status"], outcome["message"], record_id=profile.get("applicantId"),
+            jobs=[{"jobId": m["jobId"], "status": (m.get("screening") or {}).get("status")} for m in roles["matches"][:matching.TOP_N]])
+    return outcome
 
 
 # ---------- the whole run ----------

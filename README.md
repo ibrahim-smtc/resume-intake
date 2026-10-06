@@ -1,7 +1,8 @@
 # Resume Intake for Questlight
 
 An AI resume intake agent for **Questlight** (a multi-tenant ATS). A recruiter drops in a resume; the app screens out files that
-aren't resumes, reads it, creates the candidate's profile in Questlight, and shows the best matching open roles. If the resume
+aren't resumes, reads it, creates the candidate's profile in Questlight, shows the best matching open roles and puts the
+candidate on the best 3 of them at the Screening stage. If the resume
 lacks something Questlight requires (a job title, say), it asks, and the recruiter's answer completes the profile. Recruiters
 use it through a chat page, or through a **Perfox** agent that calls the same code as tools.
 
@@ -9,9 +10,9 @@ AI is used **only to read the resume**. Everything else (junk rules, the profile
 hardcoded code.
 
 ```
- resume ─► intake checks ─► "Junk?" ─► parse ─► load into Questlight ─► match open roles
-              (size, type)   (rules,    (AI)     (profile created,       (own scoring,
-                              no AI)             or: what is missing)     no AI)
+ resume ─► intake checks ─► "Junk?" ─► parse ─► load into Questlight ─► match open roles ─► screen top 3
+              (size, type)   (rules,    (AI)     (profile created,       (own scoring,        (added to each job
+                              no AI)             or: what is missing)     no AI)               at Screening, no AI)
                        every step is written to the audit log and traced
 ```
 
@@ -29,10 +30,11 @@ app/
     parser_questlight.py, parser_perfox.py     the two resume parsers (switch: RESUME_PARSER)
     questlight.py      fit a parsed resume to Questlight's rules, create the profile
     corrections.py     details a recruiter supplies for what a resume lacked
-    matching.py        match open roles
+    matching.py        match open roles (and the scoring both directions use)
+    candidates.py      the other direction: rank the candidates already in Questlight for a job
   agent/             the Perfox agent integration
     mcp_app.py         the MCP server and its token-checked /mcp endpoint
-    tools.py           the 9 tools the agent can call
+    tools.py           the 11 tools the agent can call
     intakes.py         the agent's short-term memory of the files it has taken in
     chat_bridge.py     the page's text box -> the agent's webhook
     formatting.py, downloads.py, tool_guide.py

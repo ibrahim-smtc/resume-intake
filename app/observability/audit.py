@@ -104,10 +104,16 @@ def summary(since: str = None) -> dict:
     return out
 
 
+# Steps of runs that start from a job, not from a file (the agent finding candidates for a job, or adding them to it).
+# Such a run is not "a file that came in", so it is left out of the file counts below.
+JOB_STEPS = ("find_candidates", "add_to_screening")
+_NOT_JOB = "step NOT IN ('find_candidates', 'add_to_screening')"
+
+
 def run_count(since: str = None) -> int:
     """How many files came in (one run per file)."""
     conn = _connect()
-    n = conn.execute("SELECT COUNT(DISTINCT run_id) FROM audit_log WHERE ts >= ?", (since or "",)).fetchone()[0]
+    n = conn.execute(f"SELECT COUNT(DISTINCT run_id) FROM audit_log WHERE ts >= ? AND {_NOT_JOB}", (since or "",)).fetchone()[0]
     conn.close()
     return n
 
@@ -117,7 +123,7 @@ def recent_runs(limit: int = 10) -> list:
     conn = _connect()
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT * FROM audit_log WHERE run_id IN (SELECT run_id FROM audit_log GROUP BY run_id"
+        f"SELECT * FROM audit_log WHERE run_id IN (SELECT run_id FROM audit_log WHERE {_NOT_JOB} GROUP BY run_id"
         " ORDER BY MAX(id) DESC LIMIT ?) ORDER BY id", (limit,)).fetchall()
     conn.close()
     runs = {}
