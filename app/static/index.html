@@ -20,11 +20,23 @@
       --sans: Inter, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
     html, body { margin: 0; height: 100%; background: #fff; color: var(--ink); font-family: var(--sans); }
+    /* The picture frame fills the window exactly. flow-root stops its margin from collapsing through <body> (that pushed the
+       page 16px down and gave a second, page-level scrollbar); only the conversation scrolls, inside the white panel. */
+    body { display: flow-root; overflow: hidden; }
+    /* Slim scrollbars with no arrow buttons (Windows draws chunky ones with arrows by default). Chrome, Edge and Safari take the
+       ::-webkit rules; Firefox gets the standard properties. */
+    #thread::-webkit-scrollbar, pre::-webkit-scrollbar, .tbl::-webkit-scrollbar, textarea::-webkit-scrollbar { width: 12px; height: 12px; }
+    #thread::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-thumb, .tbl::-webkit-scrollbar-thumb, textarea::-webkit-scrollbar-thumb {
+      background: #c3ccd6; border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
+    #thread::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, .tbl::-webkit-scrollbar-thumb:hover { background: #a9b4c1; background-clip: padding-box; }
+    #thread::-webkit-scrollbar-track, pre::-webkit-scrollbar-track, .tbl::-webkit-scrollbar-track, textarea::-webkit-scrollbar-track { background: transparent; }
+    #thread::-webkit-scrollbar-button, pre::-webkit-scrollbar-button, .tbl::-webkit-scrollbar-button, textarea::-webkit-scrollbar-button { display: none; }
+    @supports not selector(::-webkit-scrollbar) { #thread, pre, .tbl, textarea { scrollbar-width: thin; scrollbar-color: #c3ccd6 transparent; } }
 
     /* The rounded picture frame, like the reference: the photo fills it, a dark wash keeps the white text readable. */
     .frame {
       position: relative; display: flex; flex-direction: column; overflow: hidden;
-      height: calc(100vh - 32px); height: calc(100dvh - 32px); min-height: 560px; margin: 16px; border-radius: 28px; color: #fff;
+      height: calc(100vh - 32px); height: calc(100dvh - 32px); margin: 16px; border-radius: 28px; color: #fff;
       background:
         linear-gradient(180deg, rgba(6, 28, 58, .62) 0%, rgba(6, 28, 58, .44) 35%, rgba(6, 28, 58, .34) 58%, rgba(0, 0, 0, .12) 74%, rgba(0, 0, 0, .36) 100%),
         #1b3a5c url("/static/nature.jpg") center 35% / cover no-repeat;
