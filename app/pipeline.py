@@ -128,6 +128,25 @@ async def parse_step(run: audit.Run, name: str, ext: str, data: bytes) -> dict:
     return out
 
 
+CONTACT_LINES = {"name": "Name: {}", "email": "Email: {}", "phoneNumber": "Phone: {}"}
+
+
+async def read_with_contact(run: audit.Run, name: str, ext: str, data: bytes, text: str, contact: dict) -> dict:
+    """The parser stopped because the resume shows no email or phone (say). Once the recruiter has supplied them, the resume is
+    read again from a copy with those lines added at the top (documents.with_contact), so everything else in it (skills, work
+    history, education) is read for real. Returns parse_step's dict; parsed then has the recruiter's details on top of what the
+    parser found. The copy is only sent to the parser: the profile still gets the original file attached."""
+    lines = [CONTACT_LINES[k].format(contact[k]) for k in CONTACT_LINES if contact.get(k)]
+    copy, copy_ext = documents.with_contact(data, ext, text, lines)
+    p = await parse_step(run, Path(name).with_suffix(copy_ext).name, copy_ext, copy)
+    if p["incomplete"]:  # still nothing: don't ask again for what was just given
+        p["failed"] = fail(run, "parse", "the resume still couldn't be read after the contact details were added: " + questlight.unreadable_note(p["incomplete"]))
+        p["incomplete"] = None
+    if p["parsed"]:
+        p["parsed"].update({k: v for k, v in contact.items() if v})  # what the recruiter typed wins
+    return p
+
+
 async def load_into_questlight(run: audit.Run, data: bytes, ext: str, parsed: dict, fill: bool = False):
     """The "Load into Questlight" block. Returns (missing required fields, missing recommended fields, profile result).
     The profile is created from the real parsed data; only the redacted copy ever goes back to the page.
@@ -229,7 +248,7 @@ async def run_pipeline(run: audit.Run, name: str, ext: str, data: bytes, state: 
     if p["incomplete"]:
         profile = {"status": "not_created", "message": NOT_CREATED, "missing_items": questlight.unreadable_items(p["incomplete"])}
         run.log("load_questlight", profile["status"], profile["message"])
-        return success(name, verdict, None, None, p["incomplete"], ["see note"], [], profile)
+        return success(name, verdict, None, None, questlight.unreadable_note(p["incomplete"]), ["see note"], [], profile)
     missing, recommended, profile = await load_into_questlight(run, data, ext, p["parsed"])
     roles = await match_open_roles(run, p["parsed"], text, profile)
     return success(name, verdict, p["parsed"], p["masked_b64"], p["warning"], missing, recommended, profile, roles)

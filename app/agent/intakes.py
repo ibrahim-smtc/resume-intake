@@ -32,6 +32,7 @@ class Intake:
         self.run, self.name, self.ext, self.data, self.text, self.kind = run, name, ext, data, text, kind
         self.born = time.monotonic()
         self.parsed = self.incomplete = self.profile = self.roles = None
+        self.contact: dict = {}  # name/email/phoneNumber the recruiter gave for a resume the parser stopped on (nothing was read yet)
         self.details: dict | None = None
         self.job: dict | None = None
         self.parse_done = False

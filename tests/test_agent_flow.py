@@ -14,10 +14,13 @@ from harness import check, finish  # noqa: E402
 
 import agent_harness as ah  # noqa: E402
 from fixtures.jobs import OPEN_JOB_COUNT  # noqa: E402
-from fixtures.parsed import HARISH  # noqa: E402
+from fixtures.parsed import HARISH, ROHIT  # noqa: E402
 
-UNREADABLE_EMAIL = "We couldn't find the following details: email"
-fakes = ah.start({"harish": HARISH, "fill": HARISH, "incomplete": UNREADABLE_EMAIL})
+# Questlight's real wording: the second sentence mentions "name" too, which must not count as a missing detail
+NO_CONTACT = ("We couldn't find the following details in this resume: email, phoneNumber. "
+              "Please make sure it clearly shows the name, email, and phone number.")
+FULL = {**ROHIT, "name": "Parsed Name", "email": "parsed@example.com", "phoneNumber": "000"}   # what the parser finds once it is given contact lines
+fakes = ah.start({"harish": HARISH, "fill": HARISH, "incomplete": {"until_contact": NO_CONTACT, "then": FULL}, "stubborn": NO_CONTACT})
 
 from app.agent import chat_bridge, intakes  # noqa: E402
 
@@ -53,12 +56,28 @@ async def main():
         o["fill"] = await call("create_profile", file_id=f2, fill_missing=True)
         o["fill_titles"] = [j["jobTitle"] for j in fakes.creates[n]["workExperience"]] if len(fakes.creates) > n else None
 
-        # 5. the parser can't read the email at all
+        # 5. the resume shows no email or phone: the parser reads nothing, the recruiter supplies them, the resume is read again
         o["i1"] = await call("process_resume", file_url="https://files.test/incomplete.pdf")
         i_fid = o["i1"].get("file_id")
-        o["i2"] = await call("provide_missing_details", file_id=i_fid, answers=[
-            {"id": "name", "value": "Test Person"}, {"id": "email", "value": "test.person@example.com"}])
-        o["i3"] = await call("create_profile", file_id=i_fid)
+        o["i_early"] = await call("create_profile", file_id=i_fid)
+        o["i_bad"] = await call("provide_missing_details", file_id=i_fid, answers=[{"id": "skills", "value": "Python"}])
+        n_parses = len(fakes.parse_calls)
+        o["i2"] = await call("provide_missing_details", file_id=i_fid, answers=[{"id": "email", "value": "test.person@example.com"}])
+        o["i2_parses"] = len(fakes.parse_calls) - n_parses
+        o["i3"] = await call("provide_missing_details", file_id=i_fid, answers=[{"id": "phone", "value": "+91 90000 12345"}])
+        o["i3_parses"] = fakes.parse_calls[n_parses:]
+        n = len(fakes.creates)
+        o["i4"] = await call("create_profile", file_id=i_fid)
+        o["i4_applicant"] = fakes.creates[n] if len(fakes.creates) > n else None
+        link2 = chat_bridge.store_file("incomplete.pdf", (harness.RESUMES / "Rohit_Verma_Python_Backend.pdf").read_bytes())   # as in the real chat
+        c1 = await call("process_resume", file_url=link2)
+        await call("provide_missing_details", file_id=c1["file_id"], answers=[{"id": "email", "value": "a.b@example.com"}, {"id": "phone", "value": "+91 90000 12345"}])
+        o["i5"] = await call("process_resume", file_url=link2)   # the agent asks again later in the chat
+        # ...and when the second read fails too, the agent is told the truth and can retry
+        s1 = await call("process_resume", file_url="https://files.test/stubborn.pdf")
+        o["s_ask"] = await call("provide_missing_details", file_id=s1["file_id"], answers=[
+            {"id": "email", "value": "x.y@example.com"}, {"id": "phone", "value": "+91 90000 12345"}])
+        o["s_retry"] = await call("provide_missing_details", file_id=s1["file_id"], answers=[])
 
         # 6. the real chat: the agent has only the attachment's link
         link = chat_bridge.store_file("harish.pdf", (harness.RESUMES / "Rohit_Verma_Python_Backend.pdf").read_bytes())
@@ -112,12 +131,25 @@ check("once created, answers are refused (no editing a created profile)", o["lat
 check("'go ahead without it': created, with 'Not specified' titles, and the agent is told what was filled in",
       o["fill"]["profile_created"] is True and o["fill_titles"][1:] == ["Not specified", "Not specified"] and "a job title was empty" in o["fill"]["profile"]["adjusted"], o["fill"])
 
-check("parser can't read the email: the file is kept and only the email is asked for", o["i1"]["profile"]["status"] == "not_created" and o["i1"].get("file_id")
-      and [i["id"] for i in o["i1"]["missing_items"]] == ["email"], o["i1"])
-check("name and email can be supplied, but skills, work history and education can't be invented",
-      o["i2"]["applied"] == ["name", "email"] and o["i2"]["info_complete"] is False
-      and {i["id"]: i["can_supply"] for i in o["i2"]["missing_items"]} == {"skills": True, "workExperience": False, "education": False}, o["i2"])
-check("...so create_profile still refuses and sends nothing", o["i3"]["profile"]["status"] == "not_created" and not any(c.get("email") == "test.person@example.com" for c in fakes.creates))
+check("no email or phone in the resume: the file is kept and ONLY those two are asked for (not the name Questlight's second sentence mentions)",
+      o["i1"]["profile"]["status"] == "not_created" and o["i1"].get("file_id") and [i["id"] for i in o["i1"]["missing_items"]] == ["email", "phone"], o["i1"])
+check("the note tells the agent nothing else is known to be missing, and does not repeat Questlight's 'name, email, and phone number'",
+      "Nothing else is known to be missing" in o["i1"]["note"] and "name" not in o["i1"]["note"].lower(), o["i1"]["note"])
+check("create_profile before that still refuses", o["i_early"]["profile"]["status"] == "not_created")
+check("skills can't be supplied before the resume has been read", o["i_bad"]["applied"] == [] and "only the details in missing_items" in o["i_bad"]["rejected"][0], o["i_bad"])
+check("one of the two is not enough: it asks for the other and does not read the resume yet",
+      o["i2"]["applied"] == ["email"] and [i["id"] for i in o["i2"]["missing_items"]] == ["phone"] and o["i2_parses"] == 0, o["i2"])
+check("with both, the resume is READ AGAIN (as a DOCX copy with the contact lines), once",
+      o["i3_parses"] == ["incomplete.docx"], o["i3_parses"])
+check("...and the real content comes back: candidate read, nothing falsely missing",
+      o["i3"]["ok"] and o["i3"]["candidate"]["name"] == "Parsed Name" and o["i3"]["info_complete"] is True and o["i3"]["missing_required"] == [], o["i3"])
+check("the profile is created from the resume's real skills, work and education, with the recruiter's email and phone on top",
+      o["i4"]["profile_created"] is True and o["i4_applicant"]["email"] == "test.person@example.com" and o["i4_applicant"]["phoneNumber"] == "+91 90000 12345"
+      and o["i4_applicant"]["skills"] and o["i4_applicant"]["workExperience"] and o["i4_applicant"]["education"], o["i4"])
+check("asking about the same file later shows it as read, with no contact items", o["i5"]["missing_items"] == [] and o["i5"]["candidate"]["name"] == "Parsed Name" and "already processed" in o["i5"]["reason"], o["i5"])
+check("if the second read fails too: ok false, saying the resume still couldn't be read (not 'sections missing'), and a retry is offered",
+      o["s_ask"]["ok"] is False and "still couldn't be read" in o["s_ask"]["error"] and "answers=[]" in o["s_ask"]["next"], o["s_ask"])
+check("a retry with no answers tries the read again", o["s_retry"]["ok"] is False and "still couldn't be read" in o["s_retry"]["error"], o["s_retry"])
 
 check("chat link: the first process_resume asks for the two job titles", o["l1"]["profile"]["status"] == "not_created" and len(o["l1"]["missing_items"]) == 2 and o["l1"].get("file_id"))
 check("calling process_resume again for the same attachment does NOT run the parser again",
@@ -145,6 +177,6 @@ steps = [x[0] for x in conn.execute("SELECT step FROM audit_log WHERE run_id = ?
 conn.close()
 check("audit: the supplied details are logged by field id only, between parse and load", steps[:3] == ["junk_check", "parse", "load_questlight"] and "correction" in steps, steps)
 check("audit and traces hold no names, companies or values the recruiter typed",
-      not any(w in dump for w in ("Walmart", "Tata", "Data Engineer", "Harish", "LatentView", "Test Person")))
+      not any(w in dump for w in ("Walmart", "Tata", "Data Engineer", "Harish", "LatentView", "Test Person", "test.person@example.com", "90000 12345")))
 check("the saved files are kept per process, and at most 20 at once", len(intakes._intakes) <= intakes.MAX_FILES)
 finish()

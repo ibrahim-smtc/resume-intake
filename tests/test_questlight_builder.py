@@ -78,6 +78,8 @@ check("phone is only recommended", questlight.missing_recommended({"phoneNumber"
 unreadable = lambda msg: [i["id"] for i in questlight.unreadable_items(msg)]  # noqa: E731
 check("Questlight's 422 message says which details to ask for", unreadable("We couldn't find the following details: email") == ["email"]
       and unreadable("We couldn't find the following details: name, phone") == ["name", "phone"] and unreadable("something else") == ["name", "email"])
+check("...only from its first sentence: the 'shows the name, email, and phone number' that follows is not a list of missing details",
+      unreadable("We couldn't find the following details in this resume: email, phoneNumber. Please make sure it clearly shows the name, email, and phone number.") == ["email", "phone"])
 
 # ---- the recruiter's answers ----
 parsed = copy.deepcopy(NASTY)

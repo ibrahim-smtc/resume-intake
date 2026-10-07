@@ -39,6 +39,50 @@ def doc_text(data: bytes) -> str:
     return "\n".join(keep)
 
 
+_DOCX_TYPES = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+               '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+               '<Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" '
+               'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
+_DOCX_RELS = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+              '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+              '</Relationships>')
+_XML_BAD = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _paragraphs(lines: list) -> str:
+    return "".join(f'<w:p><w:r><w:t xml:space="preserve">{html.escape(_XML_BAD.sub("", str(x)), quote=False)}</w:t></w:r></w:p>' for x in lines)
+
+
+def with_contact(data: bytes, ext: str, text: str, lines: list):
+    """A copy of a resume with contact lines ("Email: ...") at the very top, as a DOCX: for a resume whose own contact details
+    the parser could not find, once the recruiter has supplied them. A DOCX keeps its content and gets the lines in front;
+    a PDF (or a DOCX that can't be edited) is rebuilt from its text. Returns (bytes, ".docx"). The original is never changed."""
+    if ext == ".docx":
+        try:
+            zin = zipfile.ZipFile(io.BytesIO(data))
+            xml = zin.read("word/document.xml").decode("utf-8")
+            body = re.search(r"<w:body[^>]*>", xml)
+            if body:
+                out = io.BytesIO()
+                with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+                    for item in zin.infolist():
+                        content = zin.read(item.filename)
+                        if item.filename == "word/document.xml":
+                            content = (xml[:body.end()] + _paragraphs(lines) + xml[body.end():]).encode("utf-8")
+                        zout.writestr(item, content)
+                return out.getvalue(), ".docx"
+        except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
+            pass
+    document = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                f'<w:body>{_paragraphs(list(lines) + [""] + str(text or "").splitlines())}</w:body></w:document>')
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", _DOCX_TYPES)
+        z.writestr("_rels/.rels", _DOCX_RELS)
+        z.writestr("word/document.xml", document)
+    return out.getvalue(), ".docx"
+
+
 def extract_text(data: bytes, ext: str):
     """Reads the text out of the file. Returns (text, has_images, error).
 

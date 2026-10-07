@@ -191,7 +191,7 @@ async def parse_resume(file_id: str) -> dict:
         return {"ok": True, "file_id": intake.id, "parser": settings.PARSER, "info_complete": False, "candidate": None,
                 "missing_required": [formatting.UNREADABLE], "missing_items": questlight.unreadable_items(intake.incomplete),
                 "missing_recommended": [], "note": intake.incomplete, "trace_id": trace.id,
-                "next": "ask the recruiter for the candidate's name and email, then provide_missing_details(file_id, answers)"}
+                "next": "ask the recruiter for ONLY the items in missing_items (nothing else is known to be missing), then provide_missing_details(file_id, answers): the resume is then read"}
     checked = questlight.review(intake.parsed)
     return {"ok": True, "file_id": intake.id, "parser": settings.PARSER, "candidate": formatting.candidate(pipeline.redact(intake.parsed)),
             "info_complete": not checked["missing"], "missing_required": checked["missing"], "missing_items": checked["items"],
@@ -210,7 +210,12 @@ async def provide_missing_details(file_id: str, answers: list[dict[str, str]]) -
     missing_items, for example {"id": "job_title:1", "value": "Data Engineer"}. The ids are job_title:N, job_company:N,
     degree:N, institution:N (N = the entry's number as given in missing_items), and name, email, phone, address or
     skills (a comma-separated list). Use ONLY ids from missing_items and only values the recruiter actually said:
-    never guess a value. Returns what is still missing."""
+    never guess a value. Returns what is still missing.
+
+    When process_resume/parse_resume says the parser could not read the candidate's email or phone (missing_items has
+    only those), nothing else of the resume has been read yet: ask for just those items. Once all are given this tool
+    reads the resume itself, and the result then has the candidate and anything else still missing. If reading fails the
+    result says why (ok false); calling again with answers=[] retries."""
     intake, err = _resume_intake(file_id)
     if err or intake is None:
         return {"ok": False, "error": err}
@@ -219,18 +224,39 @@ async def provide_missing_details(file_id: str, answers: list[dict[str, str]]) -
     if intake.profile and intake.profile["status"] in ("created", "duplicate"):
         return {"ok": False, "file_id": intake.id, "error": "a profile already exists for this file, so there is nothing "
                 "left to complete (this tool can't edit an existing Questlight profile)"}
-    parsed = intake.parsed if intake.parsed is not None else {}
+    unread = intake.parsed is None  # the parser stopped on missing contact details: nothing of the resume has been read
+    parsed = intake.contact if unread else intake.parsed
     applied, rejected = [], []
     for answer in answers if isinstance(answers, list) else []:
         key = str(answer.get("id", "")).strip() if isinstance(answer, dict) else ""
         value = " ".join(str(answer.get("value", "")).split()) if isinstance(answer, dict) else ""
-        problem = corrections.apply_answer(parsed, key, value)
+        problem = ("only the details in missing_items can be given until the resume has been read"
+                   if unread and key not in ("name", "email", "phone") else corrections.apply_answer(parsed, key, value))
         (rejected.append(f"{key or '?'}: {problem}") if problem else applied.append(key))
-    intake.parsed = parsed
     if applied:  # ids only (like "job_title:1"), never the values: the audit log holds no candidate details
         intake.run.log("correction", "applied", "the recruiter supplied missing details", fields=applied)
-    checked = questlight.review(parsed)
+    read_error = None
+    if unread:
+        asked = {"phone": "phoneNumber"}
+        wanted = [asked.get(i["id"], i["id"]) for i in questlight.unreadable_items(intake.incomplete)]
+        if all(intake.contact.get(k) for k in wanted):  # everything the parser asked for is in: now read the resume itself
+            async with _traced(intake.run, "provide_missing_details"):
+                p = await pipeline.read_with_contact(intake.run, intake.name, intake.ext, intake.data, intake.text, intake.contact)
+            if p["failed"]:
+                read_error = p["failed"]["error"]
+            else:
+                intake.parsed, intake.incomplete = p["parsed"], None
+        else:
+            left = [i for i in questlight.unreadable_items(intake.incomplete) if not intake.contact.get(asked.get(i["id"], i["id"]))]
+            return {"ok": True, "file_id": intake.id, "applied": applied, "rejected": rejected, "info_complete": False,
+                    "missing_required": [formatting.UNREADABLE], "missing_items": left,
+                    "next": "ask the recruiter for only the items in missing_items; once all are given the resume is read"}
+    if intake.parsed is None:  # reading it again failed (the reason is in `error`): the same call retries it
+        return {"ok": False, "file_id": intake.id, "applied": applied, "rejected": rejected, "error": read_error,
+                "next": "tell the recruiter what went wrong; calling provide_missing_details again (with answers=[]) tries once more"}
+    checked = questlight.review(intake.parsed)
     return {"ok": True, "file_id": intake.id, "applied": applied, "rejected": rejected,
+            **({"candidate": formatting.candidate(pipeline.redact(intake.parsed))} if unread else {}),
             "info_complete": not checked["missing"], "missing_required": checked["missing"], "missing_items": checked["items"],
             "next": "create_profile(file_id)" if not checked["missing"] else
                     "ask the recruiter for what is still missing, then call this again"}

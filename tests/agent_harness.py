@@ -22,7 +22,8 @@ class Fakes:
 
 
 def start(parsed_by_stem: dict, files: dict = None, token: str = "test-token-123") -> Fakes:
-    """parsed_by_stem: file stem -> parsed JSON (or a string: Questlight's "couldn't find the details" message).
+    """parsed_by_stem: file stem -> parsed JSON (or a string: Questlight's "couldn't find the details" message, or
+    {"until_contact": message, "then": parsed}: that message until the file carries "Email: ..." lines, then the parsed JSON).
     files: stem -> bytes served for https://files.test/<stem> (default: a fake resume that passes the junk check)."""
     os.environ["MCP_TOKEN"] = token
     from app.agent import downloads
@@ -41,6 +42,10 @@ def start(parsed_by_stem: dict, files: dict = None, token: str = "test-token-123
         if key is None:
             raise KeyError(f"no fake parser output registered for {name!r} (have {sorted(parsed_by_stem)})")
         entry = parsed_by_stem[key]
+        if isinstance(entry, dict) and "until_contact" in entry:   # reads only once the recruiter's contact lines are in the file
+            from app.intake import documents
+            seen = documents.docx_text(data) if ext == ".docx" else ""
+            return (copy.deepcopy(entry["then"]), None) if "Email: " in seen else (None, entry["until_contact"])
         return (None, entry) if isinstance(entry, str) else (copy.deepcopy(entry), None)
 
     async def fake_create(applicant, name, data, ext):

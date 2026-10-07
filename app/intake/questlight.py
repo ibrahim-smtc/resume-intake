@@ -178,9 +178,19 @@ def build_applicant(parsed: dict, adjusted: list = None, gaps: list = None, fill
 def unreadable_items(message: str) -> list:
     """When Questlight's parser returns no JSON at all because it could not find the candidate's name, email or phone
     (its 422 message: "We couldn't find the following details: email"), the items to ask the recruiter for."""
-    tail = str(message or "").split(":", 1)[-1].lower()
-    ids = [k for k in ("name", "email", "phone") if k in tail] or ["name", "email"]
+    # only the first sentence names the details; the next one ("...clearly shows the name, email, and phone number") must not count
+    words = set(re.findall(r"[a-z]+", str(message or "").split(":", 1)[-1].split(".")[0].lower()))
+    ids = [k for k, found in (("name", "name" in words), ("email", "email" in words),
+                              ("phone", any(w.startswith("phone") for w in words))) if found] or ["name", "email"]
     return [{"id": k, "what": k, "for": "the candidate", "can_supply": True} for k in ids]
+
+
+def unreadable_note(message: str) -> str:
+    """The note that goes with a resume the parser stopped on: what it could not find, and that the rest was not read yet.
+    (Questlight's own sentence is not passed on: it lists name, email and phone again, which reads as all three missing.)"""
+    what = " and ".join(i["what"] for i in unreadable_items(message))
+    return (f"The resume does not show the candidate's {what}, so Questlight's parser read nothing from it yet. "
+            "Nothing else is known to be missing: once these are supplied the resume is read again.")
 
 
 def review(parsed: dict, fill: bool = False, source: str = "manual upload") -> dict:
