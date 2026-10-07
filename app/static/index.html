@@ -134,11 +134,11 @@
       background: #fff; color: var(--ink); border-radius: 30px 30px 0 0; box-shadow: 0 -10px 50px rgba(0, 20, 50, .30);
       transition: flex-grow .55s cubic-bezier(.2, .8, .2, 1); position: relative; }
     /* A small, quiet button in the panel's corner: minimise the conversation back to the first look, and bring it back. */
-    #fold { all: unset; position: absolute; top: 10px; right: 14px; z-index: 5; width: 26px; height: 26px; border-radius: 50%; display: none;
-      place-items: center; cursor: pointer; color: #aab4c0; opacity: .8; transition: background .15s, color .15s; }
-    #fold:hover { background: #eef1f5; color: #5b6776; opacity: 1; }
+    #fold { all: unset; position: absolute; top: -13px; left: 50%; transform: translateX(-50%); z-index: 5; width: 44px; height: 20px; border-radius: 12px 12px 0 0;
+      display: none; place-items: center; cursor: pointer; background: #fff; color: #b3bcc8; transition: color .15s; }   /* a quiet tab on the panel's top edge */
+    #fold:hover { color: #5b6776; }
     .frame.has-chat #fold { display: grid; }
-    #fold svg { width: 16px; height: 16px; transition: transform .25s; }
+    #fold svg { width: 15px; height: 15px; transition: transform .25s; }
     .frame:not(.chatting) #fold svg { transform: rotate(180deg); }
     .panel:focus-within { box-shadow: 0 -10px 50px rgba(0, 20, 50, .30), 0 0 0 3px rgba(156, 196, 255, .85); }  /* the ring replaces the textarea's own outline */
     .frame.chatting .panel { flex-grow: 1; }
@@ -318,11 +318,7 @@
       frame.classList.add("chatting", "has-chat");
       if (!greeted) {   // an empty white panel would look broken, so the assistant says hello as it opens
         greeted = true;
-        addBot(el("div", "Hi! Click + to attach a candidate's resume (PDF or DOCX) or a job description (PDF, DOCX, TXT or DOC), " +
-          "or drag and drop it here, then press Enter. For a resume I create the profile in Questlight and match it to your open " +
-          "roles; for a JD I create the job and screen the best candidates for it." +
-          (agentMode ? " You can also paste a JD straight into the chat." : "") +
-          (agentMode ? " You can also ask me what came in recently." : "") + " Type /tools to see everything I can do."));
+        addBot(el("div", "Hi! Attach a resume or a job description with +, or just ask me something. Type /tools to see what I can do."));
       }
     }
     function scrollDown() { thread.scrollTop = thread.scrollHeight; }
