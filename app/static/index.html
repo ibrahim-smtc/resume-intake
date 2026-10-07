@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&display=swap" rel="stylesheet">
   <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap" rel="stylesheet">   <!-- Satoshi: the body font -->
+  <script>try { if (localStorage.getItem("theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}</script>
   <style>
     * { box-sizing: border-box; }
     :root {
@@ -164,6 +165,57 @@
     .frame.chatting .hint { display: none; }   /* the opening message already says this */
     .hint { margin: 8px 0 0; text-align: center; font-size: 11.5px; color: #98a3b1; }   /* inside the white box, under the input row */
 
+
+    /* ---- dark theme: frosted glass over a dimmed photo ---- */
+    html[data-theme="dark"] { --ink: #eaf1fa; --muted: #9fb0c5; --line: rgba(255, 255, 255, .12);
+      --green: #6ee7a8; --green-bg: rgba(52, 211, 153, .16); --red: #ff9b9b; --red-bg: rgba(248, 113, 113, .18);
+      --amber: #fcd58a; --amber-bg: rgba(251, 191, 36, .16); }
+    html[data-theme="dark"], html[data-theme="dark"] body { background: #070d19; }
+    html[data-theme="dark"] .frame {
+      background:
+        radial-gradient(900px 500px at 15% 0%, rgba(99, 102, 241, .28), transparent 60%),
+        radial-gradient(800px 500px at 90% 100%, rgba(20, 184, 166, .22), transparent 60%),
+        linear-gradient(180deg, rgba(4, 9, 22, .74) 0%, rgba(4, 9, 22, .62) 45%, rgba(3, 7, 18, .78) 100%),
+        #0a1224 url("/static/nature.jpg") center 35% / cover no-repeat;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 30px 80px rgba(0, 0, 0, .5); }
+    html[data-theme="dark"] .panel { background: linear-gradient(160deg, rgba(255, 255, 255, .13), rgba(255, 255, 255, .05));
+      -webkit-backdrop-filter: blur(28px) saturate(170%); backdrop-filter: blur(28px) saturate(170%);
+      border: 1px solid rgba(255, 255, 255, .18); border-bottom: 0;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), 0 -14px 60px rgba(0, 0, 0, .45); }
+    html[data-theme="dark"] .panel:focus-within { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), 0 -14px 60px rgba(0, 0, 0, .45), 0 0 0 2px rgba(125, 180, 255, .55); }
+    html[data-theme="dark"] .msg.user .bubble { background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .14); }
+    html[data-theme="dark"] .reason, html[data-theme="dark"] summary, html[data-theme="dark"] .guide-item p { color: #c3d0e0; }
+    html[data-theme="dark"] .note { color: #fcd58a; }
+    html[data-theme="dark"] .bubble a { color: #8ec5ff; }
+    html[data-theme="dark"] table.roles .small, html[data-theme="dark"] .guide-item .tech, html[data-theme="dark"] .hint { color: #7f90a8; }
+    html[data-theme="dark"] pre, html[data-theme="dark"] .md code, html[data-theme="dark"] .guide-item .try em { background: rgba(255, 255, 255, .09); color: #dbe6f3; }
+    html[data-theme="dark"] .spin { border-color: rgba(255, 255, 255, .2); border-top-color: #8ec5ff; }
+    html[data-theme="dark"] textarea::placeholder { color: #8093ab; }
+    html[data-theme="dark"] .box, html[data-theme="dark"] .frame.chatting .box { border-top-color: rgba(255, 255, 255, .12); }
+    html[data-theme="dark"] .chip { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .16); }
+    html[data-theme="dark"] .chip button { color: #b6c4d6; }
+    html[data-theme="dark"] .chip button:hover { background: rgba(255, 255, 255, .15); }
+    html[data-theme="dark"] #plus { background: rgba(255, 255, 255, .12); color: #eaf1fa; }
+    html[data-theme="dark"] #plus:hover { background: rgba(255, 255, 255, .2); }
+    html[data-theme="dark"] #send { background: linear-gradient(135deg, #5aa9ff, #34d3a0); color: #06222b; box-shadow: 0 6px 20px rgba(52, 211, 160, .3); }
+    html[data-theme="dark"] #send:hover { filter: brightness(1.1); background: linear-gradient(135deg, #5aa9ff, #34d3a0); }
+    html[data-theme="dark"] #fold { background: rgba(255, 255, 255, .14); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); color: #c6d3e3; }
+    html[data-theme="dark"] #fold:hover { color: #fff; }
+    html[data-theme="dark"] .tbl table th, html[data-theme="dark"] table.roles th { color: #9fb0c5; }
+    html[data-theme="dark"] #thread::-webkit-scrollbar-thumb, html[data-theme="dark"] pre::-webkit-scrollbar-thumb, html[data-theme="dark"] .tbl::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .28); background-clip: padding-box; }
+
+    /* ---- the light / dark switch in the top bar ---- */
+    #mode { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; gap: 9px; padding: 11px 20px 11px 16px;
+      border-radius: 999px; background: #fff; color: var(--ink); font-size: 16px; font-weight: 500; transition: background .2s, color .2s, box-shadow .2s; }
+    #mode:hover { background: #eef3f8; }
+    #mode svg { width: 19px; height: 19px; flex: none; }
+    #mode .moon { display: none; }
+    html[data-theme="dark"] #mode { background: rgba(255, 255, 255, .13); color: #fff; border: 1px solid rgba(255, 255, 255, .22);
+      -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25); }
+    html[data-theme="dark"] #mode:hover { background: rgba(255, 255, 255, .2); }
+    html[data-theme="dark"] #mode .sun { display: none; }
+    html[data-theme="dark"] #mode .moon { display: block; }
+
     @media (max-width: 760px) {
       .frame { margin: 8px; height: calc(100vh - 16px); height: calc(100dvh - 16px); border-radius: 22px; }
       nav { padding: 16px 18px; }
@@ -194,7 +246,11 @@
         <a href="/log">Audit log</a>
         <a href="/trace">Traces</a>
       </div>
-      <a class="pill" href="/classic">Classic view</a>
+      <button type="button" id="mode" aria-label="Switch between light and dark mode" title="Switch between light and dark mode">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        <span id="mode-label">Dark</span>
+      </button>
     </nav>
 
     <section class="hero" id="hero">
@@ -314,6 +370,15 @@
     });
 
     let greeted = false;
+    const modeLabel = document.getElementById("mode-label");
+    function showMode() { modeLabel.textContent = document.documentElement.dataset.theme === "dark" ? "Light" : "Dark"; }
+    showMode();
+    document.getElementById("mode").addEventListener("click", () => {
+      const dark = document.documentElement.dataset.theme !== "dark";
+      if (dark) document.documentElement.dataset.theme = "dark"; else delete document.documentElement.dataset.theme;
+      try { localStorage.setItem("theme", dark ? "dark" : "light"); } catch (e) {}
+      showMode();
+    });
     document.getElementById("fold").addEventListener("click", () => frame.classList.toggle("chatting"));
     function startChat() {
       frame.classList.add("chatting", "has-chat");
