@@ -277,15 +277,22 @@ async def create_profile(applicant: dict, name: str, data: bytes, ext: str) -> d
     if not headers:
         return {"status": "skipped", "message": "QUESTLIGHT_TOKEN is not set, so no profile was created"}
 
+    # With the resume attached, Questlight stores the file and makes the masked CV itself (Applicant.resume, .maskedCV).
     parts = [("applicantData", (None, json.dumps(applicant)))]  # (None, ...) makes it a plain multipart field
     attach = os.getenv("QUESTLIGHT_ATTACH_RESUME", "true").lower() != "false"
-    if attach:
-        parts.append(("resume", (name, data, MIME[ext])))
-
     with tracing.span("POST create-applicant") as s:
         s.set(resume_attached=attach)
-        result = await _send_profile(headers, parts)
-        s.set(outcome=result["status"])
+        result = await _send_profile(headers, parts + ([("resume", (name, data, MIME[ext]))] if attach else []))
+        # A 5xx with the file attached (its upload or the masking failing) saved nothing (one transaction), so the profile
+        # is created without the file rather than not at all. A timeout is not retried: that profile may have been saved.
+        if attach and result["status"] == "failed" and result.get("http_status", 0) >= 500:
+            s.set(first_try=result["message"])
+            result = await _send_profile(headers, parts)
+            if result["status"] == "created":
+                result["message"] = "profile created in Questlight, but WITHOUT the resume file: attaching it failed on Questlight's side"
+            attach = False
+        result["resume_attached"] = attach and result["status"] == "created"
+        s.set(outcome=result["status"], resume_attached=result["resume_attached"])
         if result["status"] == "failed":
             s.fail(result["message"])
     return result
@@ -385,4 +392,4 @@ async def _send_profile(headers: dict, parts: list) -> dict:
     if code == 403:
         return {"status": "failed", "message": "Questlight refused: the account needs the PROFILE:CREATE permission, "
                 "or this app's origin isn't allowed for the tenant (try setting QUESTLIGHT_ORIGIN)"}
-    return {"status": "failed", "message": f"Questlight returned HTTP {code}: {_problem(resp)}"}
+    return {"status": "failed", "message": f"Questlight returned HTTP {code}: {_problem(resp)}", "http_status": code}

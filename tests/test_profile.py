@@ -26,6 +26,10 @@ async def create(request: Request):
     for f in ("name", "email", "skills", "workExperience", "education"):
         if f not in d or d[f] in ("", None):
             return JSONResponse({"statusCode": 400, "message": f"{f} should not be empty"}, 400)
+    if d["email"] == "upload-breaks@example.com" and "resume" in form:   # Questlight's file upload / masking failing
+        return JSONResponse({"statusCode": 500, "message": "We couldn't create this profile."}, 500)
+    if d["email"] == "always-500@example.com":
+        return JSONResponse({"statusCode": 500, "message": "We couldn't create this profile."}, 500)
     if d["email"] == "dup@example.com":
         return JSONResponse({"statusCode": 409, "message": "Applicant already exists"}, 409)
     return JSONResponse({"statusCode": 201, "message": "The Profile was created successfully.",
@@ -77,6 +81,7 @@ check("the notes say how it came in (the page's upload)", "Source: resume intake
 check("the real email and phone are NOT in what the page gets back (masking on)",
       "priya.nair@example.com" not in json.dumps(r) and "98765" not in json.dumps(r) and r["redacted"]["email"] == "[REDACTED]")
 check("the id Questlight returned is passed on", r["profile"]["applicantId"] == "CAN-031026-00001")
+check("...and the profile says the resume file went with it", r["profile"]["resume_attached"] is True)
 
 # ---- what blocks a profile: nothing is sent ----
 run("no email", variant(PRIYA, email=""), "not_created", 0, missing_fields=["email"])
@@ -101,6 +106,13 @@ os.environ["QUESTLIGHT_ATTACH_RESUME"] = "false"
 run("QUESTLIGHT_ATTACH_RESUME=false", PRIYA, "created", 1)
 check("...sends no file", calls[-1]["has_resume"] is False)
 os.environ.pop("QUESTLIGHT_ATTACH_RESUME")
+
+r = run("attaching the file fails on Questlight's side (500)", variant(PRIYA, email="upload-breaks@example.com"), "created", 2)
+check("...so the profile is created WITHOUT the file, and that is said plainly",
+      calls[-2]["has_resume"] and not calls[-1]["has_resume"] and r["profile"]["resume_attached"] is False
+      and "WITHOUT the resume file" in r["profile"]["message"], r["profile"])
+r = run("a 500 even without the file", variant(PRIYA, email="always-500@example.com"), "failed", 2)
+check("...is reported as failed, with Questlight's status", "HTTP 500" in r["profile"]["message"] and r["profile"]["resume_attached"] is False)
 
 os.environ["QUESTLIGHT_TOKEN"] = "expired"
 r = run("rejected token", PRIYA, "failed", 0)

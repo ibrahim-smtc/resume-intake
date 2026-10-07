@@ -36,7 +36,8 @@ def screening(roles):
 
 def profile_view(profile: dict) -> dict:
     return {"status": profile.get("status"), "message": profile.get("message"),
-            "candidate_id": profile.get("applicantId"), "adjusted": profile.get("adjusted") or []}
+            "candidate_id": profile.get("applicantId"), "resume_attached": profile.get("resume_attached"),
+            "adjusted": profile.get("adjusted") or []}
 
 
 def next_hint(status):

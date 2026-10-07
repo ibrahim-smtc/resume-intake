@@ -75,6 +75,8 @@ async def process_resume(file_url: str, file_name: str = "") -> dict:
     - candidate: name, contact details, experience, skills, as read from the resume.
     - profile_created / profile.status: "created" (new profile, see candidate_id), "duplicate" (a profile with this
       email already exists, nothing changed), "not_created" (required info missing), "failed" or "skipped".
+    - profile.resume_attached: true when the resume file is stored on the profile (Questlight also makes the masked CV
+      from it). false on a created profile means it was created WITHOUT the file: say so.
     - profile.adjusted: things Questlight's rules made us fill in or shorten on the profile (e.g. "a job title was empty"
       means that job was saved with the title "Not specified"). If not empty, TELL the recruiter, in plain words.
     - info_complete and missing_required: the fields the resume lacks; missing_recommended: nice to have (phone).
