@@ -140,6 +140,11 @@
       display: none; place-items: center; cursor: pointer; background: #fff; color: #b3bcc8; transition: color .15s; }   /* a quiet tab on the panel's top edge */
     #fold:hover { color: #5b6776; }
     .frame.has-chat #fold { display: grid; }
+    /* While the conversation is minimised: a glimpse of the latest reply above the text box. Click it to open everything. */
+    #glimpse { display: none; margin: 0; padding: 16px 26px 0 24px; font-size: 14.5px; line-height: 1.45; color: var(--muted); cursor: pointer;
+      overflow: hidden; display: none; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .frame.has-chat:not(.chatting) #glimpse.on { display: -webkit-box; }
+    #glimpse:hover { color: var(--ink); }
     #fold svg { width: 15px; height: 15px; transition: transform .25s; }
     .frame:not(.chatting) #fold svg { transform: rotate(180deg); }
     .panel:focus-within { box-shadow: 0 -10px 50px rgba(0, 20, 50, .30), 0 0 0 3px rgba(156, 196, 255, .85); }  /* the ring replaces the textarea's own outline */
@@ -272,6 +277,7 @@
       <button type="button" id="fold" aria-label="Minimise or expand the conversation" title="Minimise / expand">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
       </button>
+      <div id="glimpse" title="Click to open the conversation"></div>
       <div id="thread" role="log" aria-live="polite" aria-label="Conversation"><div class="thread-in" id="thread-in"></div></div>
 
       <form class="box" id="form" autocomplete="off">
@@ -386,6 +392,15 @@
       try { localStorage.setItem("theme", dark ? "dark" : "light"); } catch (e) {}
     });
     document.getElementById("fold").addEventListener("click", () => frame.classList.toggle("chatting"));
+    const glimpse = document.getElementById("glimpse");
+    glimpse.addEventListener("click", () => frame.classList.add("chatting"));
+    function updateGlimpse() {   // the latest reply, as plain text
+      const bubbles = threadIn.querySelectorAll(".msg.bot .bubble");
+      const last = bubbles.length ? bubbles[bubbles.length - 1].textContent.replace(/\s+/g, " ").trim() : "";
+      glimpse.textContent = last;
+      glimpse.classList.toggle("on", !!last);
+    }
+    new MutationObserver(updateGlimpse).observe(threadIn, { childList: true, subtree: true, characterData: true });
     function startChat() {
       frame.classList.add("chatting", "has-chat");
       if (!greeted) {   // an empty white panel would look broken, so the assistant says hello as it opens
