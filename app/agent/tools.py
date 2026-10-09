@@ -20,6 +20,7 @@
 The text in each tool's docstring is what the agent reads. After changing one, click Rediscover on the integration in
 Perfox. Add every new tool to tool_guide.py too.
 """
+import asyncio
 import contextlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -88,10 +89,31 @@ async def process_resume(file_url: str, file_name: str = "") -> dict:
     earlier = intakes.find(file_url) if token else None
     if earlier and earlier.parse_done:  # already processed in this chat: say where it stands, don't run it again
         return _where_it_stands(earlier)
+    return await _once(token or str(file_url or "").strip(), lambda: _resume_job(file_url, file_name, token))
+
+
+async def _resume_job(file_url: str, file_name: str, token) -> dict:
     data, name, err = await downloads.download(file_url, file_name)
     if err:
         return {"ok": False, "decision": "error", "error": err, "profile_created": False}
     return await _take_resume(name, data, token)
+
+
+# The intakes running right now, by file (upload token, or the https link). The whole intake takes 15-60 s and a caller may
+# give up and ask again after 30 s (Perfox's default tool timeout): the second call joins the one already running instead of
+# starting another, so the file isn't parsed twice at once (the shared parser struggles with overlapping requests) and a
+# caller that has gone away doesn't cancel it half way.
+_running: dict = {}
+
+
+async def _once(key: str, start):
+    task = _running.get(key)
+    if task is None or task.done():
+        task = asyncio.ensure_future(start())
+        _running[key] = task
+        task.add_done_callback(lambda t, k=key: (_running.pop(k, None) if _running.get(k) is t else None,
+                                                 t.exception() if not t.cancelled() else None))
+    return await asyncio.shield(task)
 
 
 async def _take_resume(name: str, data: bytes, token) -> dict:
@@ -438,6 +460,11 @@ async def process_job_description(file_url: str = "", file_name: str = "", text:
     text = (text or "").strip()
     if not file_url and not text:
         return {"ok": False, "error": "pass the attached file's file_url, or the pasted JD as text"}
+    key = (_upload_token(file_url) or str(file_url).strip()) if file_url else intakes.pasted_token(text)
+    return await _once(key, lambda: _jd_job(file_url, file_name, text))
+
+
+async def _jd_job(file_url: str, file_name: str, text: str) -> dict:
     if file_url:
         token = _upload_token(file_url)
         earlier = intakes.find(file_url) if token else None
@@ -468,6 +495,8 @@ async def process_job_description(file_url: str = "", file_name: str = "", text:
         return {"ok": False, "kind": "resume", "error": "this text looks like a resume, not a job description: a resume has to be "
                 "attached as a PDF or DOCX file"}
     return _jd_answer(state, job_pipeline.PASTED, text.encode("utf-8"), result, token)
+
+
 
 
 def _jd_intake(ref: str):

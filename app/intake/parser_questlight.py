@@ -5,6 +5,7 @@ at a time.
 """
 import asyncio
 import base64
+import time
 
 import httpx
 
@@ -19,6 +20,12 @@ MIME = {".pdf": "application/pdf", ".docx": "application/octet-stream"}
 # The dev /mask API never answered for a DOCX (and then jammed the service for minutes), so only PDFs are masked.
 # Add ".docx" here once Questlight fixes that.
 MASKABLE = {".pdf"}
+
+# Quick "try again" answers from the service. A 502/503 that arrives after a long wait (the service's own gateway gives up at about
+# 30 s on a slow resume) and a 520 (~50 s) are NOT retried: the second try would cost as long again and usually fail the same way.
+RETRY_STATUSES = (502, 503, 504)
+RETRY_IF_WITHIN_S = 15
+RETRY_PAUSE_S = 3
 
 _slot = asyncio.Semaphore(1)
 
@@ -37,14 +44,23 @@ async def _call(client: httpx.AsyncClient, path: str, field: str, name: str, dat
 
 async def parse(client: httpx.AsyncClient, name: str, data: bytes, ext: str):
     """Returns (parsed resume JSON, None) or (None, error message)."""
+    started = time.monotonic()
     resp, err = await _call(client, "/resume", "pdf_doc", name, data, MIME[ext])
+    if not err and resp.status_code in RETRY_STATUSES and time.monotonic() - started < RETRY_IF_WITHIN_S:
+        await asyncio.sleep(RETRY_PAUSE_S)  # the shared service answers 503 now and then: once more, after a pause
+        tracing.current().set(retried_after=resp.status_code)
+        resp, err = await _call(client, "/resume", "pdf_doc", name, data, MIME[ext])
     if err:
         return None, err
     if resp.status_code != 200:
         try:
             return None, resp.json()["error"]["message"]
         except (ValueError, KeyError, TypeError):
-            return None, f"parser returned HTTP {resp.status_code}"
+            pass
+        if resp.status_code >= 500:
+            return None, (f"parser returned HTTP {resp.status_code}: Questlight's parsing service is busy or down. Don't retry now: "
+                          "tell the recruiter to send the file again in a minute")
+        return None, f"parser returned HTTP {resp.status_code}"
     return _take_usage(resp.json()), None
 
 

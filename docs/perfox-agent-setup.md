@@ -34,7 +34,7 @@ Perfox must be able to open `https://<host>/mcp`. Two ways:
 | URL | `https://<host>/mcp` |
 | Transport | http |
 | Auth type | bearer, and the credential is the `MCP_TOKEN` value from your `.env` (copy it yourself) |
-| Timeout | 240000 ms (a resume takes 10 to 30 s; a JD up to about 2 minutes, because Questlight writes the job's summary and questions with AI inside its create call. The 15 s default is far too short) |
+| Timeout | 240000 ms (a resume takes 10 to 30 s; a JD up to about 2 minutes, because Questlight writes the job's summary and questions with AI inside its create call. The 15 s default is far too short. If a Perfox run log shows `MCPTimeoutError ... timed out after 30000ms`, this was not saved: check it. Since a caller that gives up and asks again joins the intake already running instead of starting another, a short timeout no longer multiplies the work, but the reply will still be late) |
 | Cache TTL | 0 |
 | Rate limit | 10 per minute is plenty |
 

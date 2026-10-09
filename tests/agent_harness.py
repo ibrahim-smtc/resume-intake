@@ -4,6 +4,7 @@
 - resume "downloads" read from disk (https://files.test/<name>) and the job list pre-filled.
 
 Call after harness.isolate(). The tests then talk to /mcp with the real MCP client, exactly as Perfox does."""
+import asyncio
 import contextlib
 import copy
 import os
@@ -18,6 +19,7 @@ class Fakes:
         self.parse_calls = []      # the file names the parser was asked to read
         self.creates = []          # the payloads "sent" to Questlight
         self.create_mode = "ok"    # "ok" | "fail_once" | "duplicate"
+        self.parse_delay = 0       # seconds the fake parser takes (to test calls that overlap)
         self.url = self.headers = self.server = None
 
 
@@ -37,6 +39,8 @@ def start(parsed_by_stem: dict, files: dict = None, token: str = "test-token-123
 
     async def fake_parse(client, name, data, ext):
         fakes.parse_calls.append(name)
+        if fakes.parse_delay:
+            await asyncio.sleep(fakes.parse_delay)
         stem = Path(name).stem.lower()
         key = next((k for k in parsed_by_stem if stem.startswith(k.lower())), None)   # "Rohit_Verma.pdf" finds "rohit"
         if key is None:

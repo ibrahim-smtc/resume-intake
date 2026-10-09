@@ -99,6 +99,16 @@ async def main():
         o["l7_parses"] = len(fakes.parse_calls) - b
         o["l8"] = await call("match_roles", file_id="deadbeef")
 
+        # 6b. the caller asks again while the first intake is still running (Perfox's tool timeout is 30 s): one parse, one result
+        fakes.parse_delay = 1.5
+        link3 = chat_bridge.store_file("fill.pdf", (harness.RESUMES / "Rohit_Verma_Python_Backend.pdf").read_bytes())
+        before = len(fakes.parse_calls)
+        o["twin_a"], o["twin_b"] = await asyncio.gather(call("process_resume", file_url=link3, file_name="fill.pdf"),
+                                                        call("process_resume", file_url=link3, file_name="fill.pdf"))
+        o["twin_parses"] = len(fakes.parse_calls) - before
+        fakes.parse_delay = 0
+        o["twin_later"] = await call("process_resume", file_url=link3, file_name="fill.pdf")
+
         # 7. open roles
         o["roles"] = await call("list_open_roles", limit=3)
         o["roles_java"] = await call("list_open_roles", search="java", limit=100)
@@ -162,6 +172,12 @@ check("a later turn: process_resume shows the created profile and the roles, and
       o["l6"]["profile_created"] is True and o["l6"]["missing_items"] == [] and len(o["l6"]["top_roles"]) >= 1 and "next" not in o["l6"] and o["l4_creates"] == 1, o["l6"])
 check("parse_resume by token returns the saved data and does NOT parse again", o["l7"]["ok"] and o["l7"]["info_complete"] and o["l7_parses"] == 0, (o["l7"].get("info_complete"), o["l7_parses"]))
 check("a nonsense reference says what to pass instead", o["l8"]["ok"] is False and "file_url" in o["l8"]["error"], o["l8"])
+
+check("a second call while the first intake runs joins it: the file is parsed ONCE and both callers get the same result",
+      o["twin_parses"] == 1 and o["twin_a"].get("file_id") and o["twin_a"]["file_id"] == o["twin_b"].get("file_id")
+      and o["twin_a"]["profile"]["status"] == o["twin_b"]["profile"]["status"], (o["twin_parses"], o["twin_a"], o["twin_b"]))
+check("...and asking once more afterwards says where it stands, without parsing again",
+      "already processed" in o["twin_later"]["reason"] and o["twin_later"]["file_id"] == o["twin_a"]["file_id"], o["twin_later"])
 
 r = o["roles"]
 check("open roles: the real count and a short sample", r["ok"] and r["open_roles"] == OPEN_JOB_COUNT and r["all_open_roles"] == OPEN_JOB_COUNT and len(r["shown"]) == 3
