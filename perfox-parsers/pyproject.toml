@@ -1,0 +1,22 @@
+# Vercel installs the service from this file (it takes the dependencies from here, not from requirements.txt), and [tool.vercel]
+# tells it where the app is. requirements.txt repeats the same list for plain pip; a test checks they match.
+[project]
+name = "perfox-parsers"
+version = "0.1.0"
+description = "Resume and job description parsing via Perfox, and resume masking, shaped like Questlight's parsing service"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30",              # only for running locally (python parsers.py); Vercel runs the app itself
+    "httpx>=0.28,<1",             # the call to Perfox
+    "python-multipart>=0.0.20",   # file uploads
+    "python-dotenv>=1.0",         # reads .env locally
+    "pypdf>=6",                   # reads the text of a PDF
+    "pypdfium2>=5",               # edits a PDF in place to mask it (PDFium: Apache-2.0 / BSD-3)
+]
+
+[tool.uv]
+package = false   # an application, not a library: nothing to build or install, only its dependencies
+
+[tool.vercel]
+entrypoint = "parsers:app"
