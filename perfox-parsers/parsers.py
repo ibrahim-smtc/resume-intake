@@ -210,19 +210,20 @@ app = FastAPI(
 )
 
 
-@app.middleware("http")
-async def require_token(request: Request, call_next):
-    """When the SERVICE_TOKEN setting is present, every /parsing/ call must carry it as 'Authorization: Bearer <token>' (checked before the
-    upload is even read). Without the setting the service is open, as it is when run locally. /health stays open. Read on every call, so
-    changing the setting takes effect at once."""
-    token = os.getenv("SERVICE_TOKEN", "")
-    if token and request.url.path.startswith("/parsing/"):
-        scheme, _, sent = request.headers.get("authorization", "").partition(" ")
-        if scheme.lower() != "bearer" or not hmac.compare_digest(sent.strip().encode(), token.encode()):
-            response = fail(401, "UNAUTHORIZED", "A valid token is required. Send it as 'Authorization: Bearer <token>'.", str(uuid.uuid4()))
-            response.headers["WWW-Authenticate"] = "Bearer"
-            return response
-    return await call_next(request)
+# @app.middleware("http")
+# async def require_token(request: Request, call_next):
+
+#     """When the SERVICE_TOKEN setting is present, every /parsing/ call must carry it as 'Authorization: Bearer <token>' (checked before the
+#     upload is even read). Without the setting the service is open, as it is when run locally. /health stays open. Read on every call, so
+#     changing the setting takes effect at once."""
+#     token = os.getenv("SERVICE_TOKEN", "")
+#     if token and request.url.path.startswith("/parsing/"):
+#         scheme, _, sent = request.headers.get("authorization", "").partition(" ")
+#         if scheme.lower() != "bearer" or not hmac.compare_digest(sent.strip().encode(), token.encode()):
+#             response = fail(401, "UNAUTHORIZED", "A valid token is required. Send it as 'Authorization: Bearer <token>'.", str(uuid.uuid4()))
+#             response.headers["WWW-Authenticate"] = "Bearer"
+#             return response
+#     return await call_next(request)
 
 
 @app.get("/health")
