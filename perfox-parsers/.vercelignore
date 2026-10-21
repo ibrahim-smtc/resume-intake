@@ -1,0 +1,11 @@
+# Not part of the deployed service. (.env is never uploaded: set the variables in Vercel instead.)
+.env
+.env.*
+.venv
+.vercel
+tests
+updates.md
+BUILD_SPEC.md
+__pycache__
+*.pyc
+.pytest_cache

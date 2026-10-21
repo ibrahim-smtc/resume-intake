@@ -11,3 +11,5 @@ data
 __pycache__
 requirements-dev.txt
 run.py
+# The parsing service is deployed as its own Vercel project (root directory perfox-parsers), not with this app.
+perfox-parsers
