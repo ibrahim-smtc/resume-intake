@@ -21,7 +21,8 @@ STATIC_DIR = ROOT / "app" / "static"
 # Which parser reads the resume: "questlight" (Questlight's parsing service) or "perfox" (app/intake/parser_perfox.py,
 # a temporary stand-in that uses Perfox's extract_structured).
 PARSER = os.getenv("RESUME_PARSER", "questlight").lower()
-PARSING_BASE_URL = os.getenv("PARSING_BASE_URL", "https://dev-api.quest-light.com/parsing")
+PARSING_BASE_URL = os.getenv("PARSING_BASE_URL", "https://resume-intake-perfox-parser.vercel.app/parsing")
+MASKING_BASE_URL = os.getenv("MASKING_BASE_URL", "https://dev-api.quest-light.com/parsing")
 PARSER_TIMEOUT_S = 60
 # Questlight's matching service (its own semantic matching), started for each job created from a JD.
 MATCHING_BASE_URL = os.getenv("MATCHING_BASE_URL", "https://dev-api.quest-light.com/matching")
