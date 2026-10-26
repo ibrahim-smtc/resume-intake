@@ -1,4 +1,5 @@
 """Who can reach what (app/security.py), and the settings that change on Vercel (app/settings.py)."""
+import base64
 import json
 import os
 import subprocess
@@ -64,6 +65,110 @@ with TestClient(app) as client:
     check("on Vercel with a password, the page opens with it", client.get("/", auth=("u", "pw")).status_code == 200 and client.get("/").status_code == 401)
     os.environ.pop("APP_PASSWORD")
     settings.ON_VERCEL = False
+
+    # ---- /parsing auth matrix & host guard helper ----
+    TOKEN_VAL = "test-token-123"
+    PWD_VAL = "test-pass-456"
+    BASIC_HDR = "Basic " + base64.b64encode(f":{PWD_VAL}".encode("utf-8")).decode("utf-8")
+
+    headers_map = {
+        "none": {},
+        "bearer": {"Authorization": f"Bearer {TOKEN_VAL}"},
+        "service_token": {"X-Service-Token": TOKEN_VAL},
+        "wrong_bearer": {"Authorization": "Bearer wrong-token"},
+        "basic": {"Authorization": BASIC_HDR},
+    }
+
+    # 1. Neither set: open
+    os.environ.pop("PERFOX_PARSERS_TOKEN", None)
+    os.environ.pop("APP_PASSWORD", None)
+    check("neither set: /parsing/health is 200 for all",
+          all(client.get("/parsing/health", headers=h).status_code == 200 for h in headers_map.values()))
+    check("neither set: /parsing/jd is 400 (past auth) for all",
+          all(client.post("/parsing/jd", headers=h).status_code == 400 for h in headers_map.values()))
+    check("neither set: / is 200 for all",
+          all(client.get("/", headers=h).status_code == 200 for h in headers_map.values()))
+
+    # 2. Token only: /parsing/* requires token, / stays open
+    os.environ["PERFOX_PARSERS_TOKEN"] = TOKEN_VAL
+    os.environ.pop("APP_PASSWORD", None)
+    check("token only: /parsing/health is 200 for all",
+          all(client.get("/parsing/health", headers=h).status_code == 200 for h in headers_map.values()))
+    check("token only: /parsing/jd accepts valid Bearer and X-Service-Token, rejects others",
+          client.post("/parsing/jd", headers=headers_map["bearer"]).status_code == 400
+          and client.post("/parsing/jd", headers=headers_map["service_token"]).status_code == 400
+          and client.post("/parsing/jd", headers=headers_map["none"]).status_code == 401
+          and client.post("/parsing/jd", headers=headers_map["wrong_bearer"]).status_code == 401
+          and client.post("/parsing/jd", headers=headers_map["basic"]).status_code == 401)
+    check("token only: / remains open for all",
+          all(client.get("/", headers=h).status_code == 200 for h in headers_map.values()))
+
+    # 3. Password only: all need Basic except /parsing/health
+    os.environ.pop("PERFOX_PARSERS_TOKEN", None)
+    os.environ["APP_PASSWORD"] = PWD_VAL
+    check("password only: /parsing/health is 200 for all",
+          all(client.get("/parsing/health", headers=h).status_code == 200 for h in headers_map.values()))
+    check("password only: /parsing/jd needs Basic",
+          client.post("/parsing/jd", headers=headers_map["basic"]).status_code == 400
+          and all(client.post("/parsing/jd", headers=headers_map[k]).status_code == 401
+                  for k in ("none", "bearer", "service_token", "wrong_bearer")))
+    check("password only: / needs Basic",
+          client.get("/", headers=headers_map["basic"]).status_code == 200
+          and all(client.get("/", headers=headers_map[k]).status_code == 401
+                  for k in ("none", "bearer", "service_token", "wrong_bearer")))
+
+    # 4. Both set: /parsing/jd accepts token OR Basic; / requires Basic (token does NOT unlock /)
+    os.environ["PERFOX_PARSERS_TOKEN"] = TOKEN_VAL
+    os.environ["APP_PASSWORD"] = PWD_VAL
+    check("both set: /parsing/health is 200 for all",
+          all(client.get("/parsing/health", headers=h).status_code == 200 for h in headers_map.values()))
+    check("both set: /parsing/jd accepts Bearer, X-Service-Token, or Basic",
+          client.post("/parsing/jd", headers=headers_map["bearer"]).status_code == 400
+          and client.post("/parsing/jd", headers=headers_map["service_token"]).status_code == 400
+          and client.post("/parsing/jd", headers=headers_map["basic"]).status_code == 400
+          and client.post("/parsing/jd", headers=headers_map["none"]).status_code == 401
+          and client.post("/parsing/jd", headers=headers_map["wrong_bearer"]).status_code == 401)
+    check("both set: Basic works on /parsing/jd and token does not unlock /",
+          client.post("/parsing/jd", headers=headers_map["basic"]).status_code == 400
+          and client.get("/", headers=headers_map["bearer"]).status_code == 401
+          and client.get("/", headers=headers_map["service_token"]).status_code == 401
+          and client.get("/", headers=headers_map["basic"]).status_code == 200)
+
+    # Clean up environment after matrix tests
+    os.environ.pop("PERFOX_PARSERS_TOKEN", None)
+    os.environ.pop("APP_PASSWORD", None)
+
+    # ---- parsing_auth_headers host guard helper ----
+    os.environ["PERFOX_PARSERS_TOKEN"] = TOKEN_VAL
+    check("auth helper returns {} for untrusted host",
+          settings.parsing_auth_headers("https://dev-api.quest-light.com/parsing") == {}
+          and settings.parsing_auth_headers("https://evil.thirdparty.com/parsing") == {})
+    check("auth helper returns Bearer header for own-app host",
+          settings.parsing_auth_headers("https://resume-intake-five.vercel.app/parsing") == {"Authorization": f"Bearer {TOKEN_VAL}"})
+    check("auth helper returns Bearer header for localhost and 127.0.0.1",
+          settings.parsing_auth_headers("http://localhost:8000/parsing") == {"Authorization": f"Bearer {TOKEN_VAL}"}
+          and settings.parsing_auth_headers("http://127.0.0.1:8000/parsing") == {"Authorization": f"Bearer {TOKEN_VAL}"})
+
+    os.environ["PARSING_TRUSTED_HOSTS"] = "api.internal,custom.host"
+    check("auth helper returns Bearer header for PARSING_TRUSTED_HOSTS entry",
+          settings.parsing_auth_headers("https://api.internal/parsing") == {"Authorization": f"Bearer {TOKEN_VAL}"}
+          and settings.parsing_auth_headers("https://custom.host:9000/parsing") == {"Authorization": f"Bearer {TOKEN_VAL}"}
+          and settings.parsing_auth_headers("https://untrusted.internal/parsing") == {})
+    os.environ.pop("PARSING_TRUSTED_HOSTS", None)
+
+    os.environ["VERCEL_URL"] = "preview-deployment-abc.vercel.app"
+    check("auth helper returns Bearer header for VERCEL_URL host",
+          settings.parsing_auth_headers("https://preview-deployment-abc.vercel.app/parsing") == {"Authorization": f"Bearer {TOKEN_VAL}"})
+    os.environ.pop("VERCEL_URL", None)
+
+    # When token is empty but password is set, helper returns Basic
+    os.environ.pop("PERFOX_PARSERS_TOKEN", None)
+    os.environ["APP_PASSWORD"] = PWD_VAL
+    check("auth helper returns Basic header when only password is set",
+          settings.parsing_auth_headers("http://localhost:8000/parsing") == {"Authorization": BASIC_HDR})
+    os.environ.pop("APP_PASSWORD", None)
+    check("auth helper returns {} when neither token nor password is set",
+          settings.parsing_auth_headers("http://localhost:8000/parsing") == {})
 
 
 # ---- settings differ on Vercel (a fresh process, because they are read once at import) ----

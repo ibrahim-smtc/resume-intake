@@ -105,9 +105,11 @@ docs and secrets out of the upload).
 1. Put the project in a Git repository and import it in Vercel (or run `vercel` from this folder). No build command is needed.
    Check that `.env` is **not** committed (it is in `.gitignore`).
 2. Under *Settings > Environment Variables* add the settings from `.env.example`: at least `QUESTLIGHT_TOKEN`, `RESUME_PARSER`,
-   `MCP_TOKEN`, `PERFOX_WEBHOOK_URL` and `PERFOX_WEBHOOK_SECRET`. `APP_PASSWORD` is optional: without it the pages are open to
-   anyone with the URL, which is fine while testing but means anyone can create profiles in Questlight with your token. Set it
-   before sharing the link.
+   `MCP_TOKEN`, `PERFOX_WEBHOOK_URL`, `PERFOX_WEBHOOK_SECRET`, and `PERFOX_API_KEY`.
+   **Important**: `PERFOX_PARSERS_TOKEN` or `APP_PASSWORD` MUST be set on Vercel, otherwise `/parsing/resume` and `/parsing/jd`
+   are open to anyone with the URL and every call spends Perfox credits. `APP_PASSWORD` is optional for local testing, but
+   without it the pages and APIs are open to anyone with the URL (which means anyone can create profiles in Questlight with your token).
+   Set it before sharing the link.
 3. Deploy, open the URL, and enter the password (any user name).
 4. In Perfox, change the MCP integration's URL to `https://<project>.vercel.app/mcp` and click Rediscover. The tunnel is no longer
    needed. The webhook URL doesn't change.

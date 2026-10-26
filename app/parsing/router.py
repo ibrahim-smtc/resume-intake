@@ -1,5 +1,5 @@
-"""Parsing routes: POST /parsing/resume, /parsing/jd, /parsing/mask
-Moved from the separate perfox-parsers Vercel deployment into the main app.
+"""Parsing routes: POST /parsing/resume, /parsing/jd, /parsing/mask, and GET /parsing/health.
+Moved from perfox-parsers Vercel deployment into the main app.
 """
 # ── Standard Library ──────────────────────────────────────────────────────────
 import asyncio
@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import re
-import sys
 import time
 import uuid
 from datetime import date
@@ -19,17 +18,16 @@ import httpx
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 
-# ── Local Modules (same package) ─────────────────────────────────────────────
+# ── Local Modules ─────────────────────────────────────────────────────────────
+from app import settings
 from app.parsing import documents
-from app.parsing.fix_jd import fix_jd
-from app.parsing.fix_normlization import check_required, fix_dates_and_experience, tidy_education
-from app.parsing.jd_schema import build_jd_prompt, build_jd_schema
-from app.parsing.schema import build_prompt, build_schema
-from app.parsing.verify_identity import verify_identity
+from app.parsing.jd.fix_jd import fix_jd
+from app.parsing.jd.jd_schema import build_jd_prompt, build_jd_schema
+from app.parsing.resume.fix_normlization import check_required, fix_dates_and_experience, tidy_education
+from app.parsing.resume.schema import build_prompt, build_schema
+from app.parsing.resume.verify_identity import verify_identity
 
 # ── 1. Configuration ──────────────────────────────────────────────────────────
-PERFOX_BASE_URL: str = os.getenv("PERFOX_BASE_URL", "").rstrip("/")
-PERFOX_API_KEY: str = os.getenv("PERFOX_API_KEY", "")
 MAX_FILE_BYTES: int = 10 * 1024 * 1024  # 10 MB limit
 ALLOWED_EXTS: set[str] = {".pdf", ".docx"}
 TIMEOUT_S: int = 90
@@ -101,10 +99,12 @@ def get_text(data: bytes, ext: str) -> tuple[str, bool, str | None]:
 async def call_perfox(
     name: str, data: bytes, ext: str, text: str, schema: dict, prompt: str
 ) -> tuple[dict | None, dict | None, tuple[int, str, str] | None]:
-    if not PERFOX_BASE_URL or not PERFOX_API_KEY:
+    perfox_url = settings.PERFOX_BASE_URL
+    perfox_key = settings.PERFOX_API_KEY
+    if not perfox_url or not perfox_key:
         return None, None, (500, "CONFIG_ERROR", "Perfox API credentials are not configured")
 
-    key = PERFOX_API_KEY[7:] if PERFOX_API_KEY.lower().startswith("bearer") else PERFOX_API_KEY
+    key = perfox_key[7:] if perfox_key.lower().startswith("bearer") else perfox_key
 
     if ext == ".pdf":
         upload_data = data
@@ -122,7 +122,7 @@ async def call_perfox(
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_S)) as client:
             resp = await client.post(
-                f"{PERFOX_BASE_URL}/documents/extract_structured",
+                f"{perfox_url}/documents/extract_structured",
                 headers=headers,
                 files=files,
                 data=payload_data,
@@ -164,7 +164,7 @@ def health():
         "status": "ok",
         "timestamp": time.time(),
         "date": TODAY,
-        "perfox_configured": bool(PERFOX_BASE_URL and PERFOX_API_KEY),
+        "perfox_configured": bool(settings.PERFOX_BASE_URL and settings.PERFOX_API_KEY),
     }
 
 
@@ -252,7 +252,13 @@ async def parse_jd(
         if ext != ".pdf":
             clean = clean[:JD_TEXT_LIMIT]
 
-        log.info("jd ext=%s size=%d text_chars=%d elapsed_ms=%d", ext, len(data), len(clean), int((time.monotonic() - t0) * 1000))
+        log.info(
+            "jd ext=%s size=%d text_chars=%d elapsed_ms=%d",
+            ext,
+            len(data),
+            len(clean),
+            int((time.monotonic() - t0) * 1000),
+        )
 
     elif jd_text.strip():
         filename = "jd.txt"
@@ -261,12 +267,20 @@ async def parse_jd(
         if len(clean) < MIN_TEXT_CHARS:
             return fail(422, "UNREADABLE_DOCUMENT", "Not enough readable text in this file.", req_id)
         data = clean.encode("utf-8")
-        log.info("jd ext=%s size=%d text_chars=%d elapsed_ms=%d", ext, len(data), len(clean), int((time.monotonic() - t0) * 1000))
+        log.info(
+            "jd ext=%s size=%d text_chars=%d elapsed_ms=%d",
+            ext,
+            len(data),
+            len(clean),
+            int((time.monotonic() - t0) * 1000),
+        )
 
     else:
         return fail(400, "NO_JOB_DESCRIPTION", "Send a file or paste the job description text.", req_id)
 
-    parsed, usage, err = await call_perfox(filename, data, ext, clean, build_jd_schema(), build_jd_prompt(date.today()))
+    parsed, usage, err = await call_perfox(
+        filename, data, ext, clean, build_jd_schema(), build_jd_prompt(date.today())
+    )
     if err:
         status, code, msg = err
         return fail(status, code, msg, req_id)
@@ -284,7 +298,10 @@ def download_header(filename: str) -> str:
     name = f"{Path(filename).stem or 'resume'}_redacted.pdf"
     if re.fullmatch(r"[A-Za-z0-9._-]+", name):
         return f"attachment; filename={name}"
-    ascii_name = name.encode("ascii", "ignore").decode().replace('"', "").replace("\\", "") or "resume_redacted.pdf"
+    ascii_name = (
+        name.encode("ascii", "ignore").decode().replace('"', "").replace("\\", "")
+        or "resume_redacted.pdf"
+    )
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
 
 
@@ -300,7 +317,7 @@ async def mask_resume(file: UploadFile | None = File(None)):
     if not data or Path(filename).suffix.lower() != ".pdf" or b"%PDF-" not in data[:1024]:
         return fail(400, "UNSUPPORTED_FILE_TYPE", MASK_NOT_A_PDF, req_id)
     try:
-        from app.parsing import masking
+        from app.parsing.masking import masking
     except ImportError:
         return fail(500, "MASKING_UNAVAILABLE", "Masking is not available on this server.", req_id)
     try:

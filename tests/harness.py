@@ -23,7 +23,8 @@ JUNK_FILES = FIXTURES / "junk" / "files"  # 30 invented files for the junk rules
 # Anything a real .env or shell could carry that a test must not inherit.
 _REAL_SETTINGS = ("QUESTLIGHT_TOKEN", "QUESTLIGHT_BASE_URL", "QUESTLIGHT_ORIGIN", "QUESTLIGHT_ATTACH_RESUME", "PARSING_BASE_URL",
                   "PERFOX_API_KEY", "PERFOX_BASE_URL", "PERFOX_WEBHOOK_URL", "PERFOX_WEBHOOK_SECRET", "MCP_TOKEN", "MCP_FILE_HOSTS",
-                  "APP_PASSWORD", "MAX_UPLOAD_MB", "VERCEL", "AUDIT_DB", "RESUME_PARSER", "MASKING_ENABLED")
+                  "APP_PASSWORD", "MAX_UPLOAD_MB", "VERCEL", "AUDIT_DB", "RESUME_PARSER", "MASKING_ENABLED",
+                  "PERFOX_PARSERS_TOKEN", "PARSING_TRUSTED_HOSTS")
 
 _results = []
 

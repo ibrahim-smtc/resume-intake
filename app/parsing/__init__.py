@@ -1,1 +1,1 @@
-# app/parsing package
+"""app.parsing package: resume, jd, and masking parsers."""

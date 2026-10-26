@@ -1,4 +1,4 @@
-"""perfox-parsers/fixup.py
+"""app/parsing/resume/fix_normlization.py
 Post-processing normalization for parsed resumes:
 - Deduplicates certification names from technical skills
 - Clamps end dates to today for current/ongoing roles

@@ -35,7 +35,9 @@ async def _call(client: httpx.AsyncClient, path: str, field: str, name: str, dat
     try:
         async with _slot:
             base = settings.MASKING_BASE_URL if path == "/mask" else settings.PARSING_BASE_URL
-            resp = await client.post(f"{base}{path}", files={field: (name, data, mime)})
+            target_url = f"{base}{path}"
+            headers = settings.parsing_auth_headers(target_url)
+            resp = await client.post(target_url, files={field: (name, data, mime)}, headers=headers)
         return resp, None
     except httpx.TimeoutException:
         return None, f"Questlight {path.strip('/')} API timed out after {settings.PARSER_TIMEOUT_S}s"

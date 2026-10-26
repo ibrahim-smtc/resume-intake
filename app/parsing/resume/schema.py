@@ -1,4 +1,4 @@
-"""perfox-parsers/schema.py
+"""app/parsing/resume/schema.py
 Schema and prompt management for Perfox structured resume extraction.
 """
 from datetime import date

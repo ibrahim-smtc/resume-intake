@@ -1,9 +1,23 @@
-"""perfox-parsers/jd_schema.py
+"""app/parsing/jd/jd_schema.py
 Schema definition for Perfox structured Job Description (JD) extraction.
 """
 from datetime import date
 from pathlib import Path
-from schema import _obj, _str, _arr
+def _obj(props: dict) -> dict:
+    return {
+        "type": "object",
+        "properties": props,
+        "required": list(props),
+        "additionalProperties": False,
+    }
+
+
+def _str(description: str = "") -> dict:
+    return {"type": "string", "description": description}
+
+
+def _arr(items: dict, description: str = "") -> dict:
+    return {"type": "array", "items": items, "description": description}
 
 # ── 1. Prompt Loader ─────────────────────────────────────────────────────────
 
