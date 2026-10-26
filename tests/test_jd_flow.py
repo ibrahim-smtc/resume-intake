@@ -7,6 +7,7 @@ import base64
 import json
 import math
 import os
+import re
 import sqlite3
 
 import harness
@@ -304,8 +305,9 @@ check("the summary counts JDs and jobs", sum(summary["jobs"].values()) >= 8 and 
       and summary["job_descriptions"].get("job_description", 0) >= 6, summary)
 check("the agent sees the three JD tools", {"process_job_description", "provide_job_details", "create_job"} <= o["tools"])
 raw = "\n".join(sqlite3.connect(os.environ["AUDIT_DB"]).iterdump())
-check("no candidate names, JD text or salaries in the audit database", not any(w in raw for w in ("Asha Rao", "Ravi Sales", "Spring Boot", "1500000", "Selenium")),
-      [w for w in ("Asha Rao", "Ravi Sales", "Spring Boot", "1500000", "Selenium") if w in raw])
+# The dump holds epoch timestamps, so a bare "1500000" can turn up inside one by chance: match the salary as a whole number.
+leaks = [w for w in ("Asha Rao", "Ravi Sales", "Spring Boot", "Selenium") if w in raw] + (["1500000"] if re.search(r"(?<![\d.])1500000(?![\d])", raw) else [])
+check("no candidate names, JD text or salaries in the audit database", not leaks, leaks)
 steps = {r["step"] for r in audit.recent(1000)}
 check("each step is in the audit log", {"jd_check", "jd_parse", "create_job", "job_matching", "find_candidates_for_new_job", "screen_candidates", "job_details"} <= steps, steps)
 finish()
