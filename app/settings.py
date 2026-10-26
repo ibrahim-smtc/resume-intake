@@ -6,10 +6,8 @@ Only settings that are fixed for the life of the process live here. A few are de
 used, so they can change without a restart: QUESTLIGHT_* (app/intake/questlight.py), MCP_TOKEN and MCP_FILE_HOSTS
 (app/agent), PERFOX_WEBHOOK_* (app/agent/chat_bridge.py), AUDIT_DB (app/observability/audit.py).
 """
-import base64
 import os
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -30,51 +28,6 @@ PARSER_TIMEOUT_S = 60
 # Perfox API credentials (for /parsing endpoints)
 PERFOX_BASE_URL = os.getenv("PERFOX_BASE_URL", "").rstrip("/")
 PERFOX_API_KEY = os.getenv("PERFOX_API_KEY", "")
-PERFOX_PARSERS_TOKEN = os.getenv("PERFOX_PARSERS_TOKEN", "")
-APP_PASSWORD = os.getenv("APP_PASSWORD", "")
-
-
-def is_parsing_host_trusted(host: str) -> bool:
-    """Whether a host is trusted to receive parsing credentials (PERFOX_PARSERS_TOKEN or APP_PASSWORD)."""
-    if not host:
-        return False
-    h = host.lower()
-    trusted = {"localhost", "127.0.0.1", "resume-intake-five.vercel.app"}
-    vercel_url = os.getenv("VERCEL_URL", "").strip()
-    if vercel_url:
-        parsed_v = urlsplit(f"https://{vercel_url}" if "://" not in vercel_url else vercel_url)
-        if parsed_v.hostname:
-            trusted.add(parsed_v.hostname.lower())
-    extra = os.getenv("PARSING_TRUSTED_HOSTS", "").strip()
-    if extra:
-        for entry in extra.split(","):
-            clean_entry = entry.strip().lower()
-            if clean_entry:
-                trusted.add(clean_entry)
-    return h in trusted
-
-
-def parsing_auth_headers(target_url: str) -> dict[str, str]:
-    """Authorization headers for calls to parsing endpoints (PERFOX_PARSERS_TOKEN as Bearer, else APP_PASSWORD as Basic).
-    Credentials are only attached when the target URL points to a trusted host (our own deployment or localhost),
-    preventing credential leakage if PARSING_BASE_URL or MASKING_BASE_URL points to a third-party service.
-    """
-    if not target_url:
-        return {}
-    parsed = urlsplit(target_url if "://" in target_url else f"https://{target_url}")
-    host = parsed.hostname or ""
-    if not is_parsing_host_trusted(host):
-        return {}
-
-    token = os.getenv("PERFOX_PARSERS_TOKEN", "") or PERFOX_PARSERS_TOKEN
-    password = os.getenv("APP_PASSWORD", "") or APP_PASSWORD
-    if token:
-        return {"Authorization": f"Bearer {token}"}
-    if password:
-        creds = base64.b64encode(f":{password}".encode()).decode()
-        return {"Authorization": f"Basic {creds}"}
-    return {}
-
 
 # Questlight's matching service (its own semantic matching), started for each job created from a JD.
 MATCHING_BASE_URL = os.getenv("MATCHING_BASE_URL", "https://dev-api.quest-light.com/matching")
