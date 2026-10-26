@@ -1,7 +1,7 @@
 """OPT-IN: checks the code against the REAL Questlight dev services. Skipped unless RUN_LIVE=1. Reads your real .env.
 
 What it does, and what it never does:
-- reads a fake resume with Questlight's real parser (a stateless call),
+- reads a fake resume with Perfox's real parser (a stateless call),
 - reads the real open-jobs list (read-only),
 - sends profiles that Questlight MUST reject (an invalid email is always included), to see which rules it enforces. The rejection
   is the point: nothing is ever created.
@@ -28,19 +28,14 @@ import httpx  # noqa: E402
 from harness import RESUMES, check, finish  # noqa: E402
 
 from app import settings  # noqa: E402
-from app.intake import matching, parser_questlight, questlight  # noqa: E402
+from app.intake import matching, parser_perfox, questlight  # noqa: E402
 
 headers = questlight.auth_headers()
 check("QUESTLIGHT_TOKEN is set (needed for the checks below)", headers is not None)
 
 
-async def parse_fake_resume():
-    async with httpx.AsyncClient(timeout=60) as client:
-        return await parser_questlight.parse(client, "Rohit_Verma_Python_Backend.pdf", (RESUMES / "Rohit_Verma_Python_Backend.pdf").read_bytes(), ".pdf")
-
-
-parsed, err = asyncio.run(parse_fake_resume())
-check("Questlight's real parser reads a fake resume", err is None and parsed.get("name") == "Rohit Verma", err)
+parsed, err = asyncio.run(parser_perfox.parse_resume("Rohit_Verma_Python_Backend.pdf", (RESUMES / "Rohit_Verma_Python_Backend.pdf").read_bytes(), ".pdf"))
+check("Perfox's real parser reads a fake resume", err is None and parsed.get("name") == "Rohit Verma", err)
 
 jobs, err = asyncio.run(matching.fetch_open_jobs())
 check("the real open-jobs list loads", err is None and len(jobs) > 0, err)

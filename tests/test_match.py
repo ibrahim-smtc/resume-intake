@@ -6,7 +6,7 @@ import os
 
 import harness
 
-harness.isolate(QUESTLIGHT_TOKEN="good-token", RESUME_PARSER="perfox")
+harness.isolate(QUESTLIGHT_TOKEN="good-token")
 from harness import JUNK_FILES, check, finish, serve  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402

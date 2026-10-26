@@ -1,8 +1,4 @@
-"""TEMPORARY resume parser that uses Perfox's extract_structured instead of Questlight's parsing service.
-
-Why it exists: Questlight's dev parser stopped answering at times (Cloudflare 524), and the plan is to compare it with
-Perfox's before choosing one. It returns the same JSON shape as Questlight's parser, so the pipeline and the page don't
-care which one produced it. Switch with RESUME_PARSER=questlight|perfox and a restart.
+"""The resume parser: Perfox's extract_structured. The pipeline, the page and the agent only see the JSON it returns.
 
 WARNING: the Perfox workspace this calls (PERFOX_BASE_URL) may belong to another client. Use FAKE test resumes only,
 never real candidate data.
@@ -20,6 +16,9 @@ from app.intake.documents import docx_text
 from app.observability import tracing
 
 TIMEOUT_S = 90  # one extraction took 10-19 s in testing
+# Start of the message that says a real resume has no name, email or phone to read. This parser doesn't send it (a missing
+# detail comes back as an empty field and is asked for later); the pipeline still understands it.
+MISSING_MESSAGE = "We couldn't find the following details"
 
 
 def _obj(props: dict) -> dict:

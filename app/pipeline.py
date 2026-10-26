@@ -11,10 +11,8 @@ candidate is put on for screening: the best 3 matches, no more.
 """
 from pathlib import Path
 
-import httpx
-
 from app import settings
-from app.intake import documents, junk, matching, parser_perfox, parser_questlight, questlight
+from app.intake import documents, junk, matching, parser_perfox, questlight
 from app.observability import audit, tracing
 
 RESUME_TYPES = (".pdf", ".docx")  # what the resume parser reads
@@ -86,45 +84,26 @@ def junk_step(run: audit.Run, name: str, ext: str, data: bytes):
 
 
 async def parse_step(run: audit.Run, name: str, ext: str, data: bytes) -> dict:
-    """The parse block, with whichever parser settings.PARSER selects. Returns a dict with
+    """The parse block: Perfox's extract_structured (app/intake/parser_perfox.py). Returns a dict with
     parsed (the resume JSON, or None), failed (the finished error result, or None),
-    incomplete (Questlight's "name/email/phone missing" message: a real resume, but there is no JSON), and
-    masked_b64 / warning (only the Questlight parser can mask)."""
+    incomplete (a "name/email/phone missing" message: a real resume, but there is no JSON), and
+    masked_b64 / warning (no masked PDF is made with this parser)."""
     out = {"parsed": None, "failed": None, "incomplete": None, "masked_b64": None, "warning": None}
-    if settings.PARSER == "perfox":
-        with tracing.span("parse resume", kind="llm") as s:
-            s.set_usage(provider="perfox")
-            parsed, err = await parser_perfox.parse_resume(name, data, ext)
-            if err:
-                out["failed"] = fail(run, "parse", err)
-                return out
-        run.log("parse", "ok", "parsed with the temporary Perfox parser", parser=settings.PARSER)
-        out["parsed"] = parsed
-        out["warning"] = "no masked PDF while the temporary Perfox parser is on (only Questlight's service can mask)"
-        return out
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(settings.PARSER_TIMEOUT_S)) as client:
-        with tracing.span("parse resume", kind="llm") as s:
-            s.set_usage(provider="questlight")
-            parsed, err = await parser_questlight.parse(client, name, data, ext)
-            if err and err.startswith(parser_questlight.MISSING_MESSAGE):
-                # A real resume that lacks name/email/phone: Questlight returns no JSON, so there is nothing to load.
-                s.set(outcome="required fields missing")
-                run.log("parse", "incomplete", err, parser=settings.PARSER)
-                out["incomplete"] = out["warning"] = err
-                return out
-            if err:
-                out["failed"] = fail(run, "parse", err)
-                return out
-        run.log("parse", "ok", "parsed with Questlight's parser", parser=settings.PARSER)
-        out["parsed"] = parsed
-        if settings.MASKING:  # off by default: the mask call is skipped entirely, so it adds no time and no failure point
-            with tracing.span("mask PDF") as s:
-                out["masked_b64"], out["warning"] = await parser_questlight.mask(client, name, data, ext)
-                if out["warning"]:
-                    s.set(note=out["warning"])
-                    if ext in parser_questlight.MASKABLE:
-                        s.fail(out["warning"])
+    with tracing.span("parse resume", kind="llm") as s:
+        s.set_usage(provider="perfox")
+        parsed, err = await parser_perfox.parse_resume(name, data, ext)
+        if err and err.startswith(parser_perfox.MISSING_MESSAGE):
+            # A real resume that lacks name/email/phone: there is no JSON to load, so the recruiter is asked for them.
+            s.set(outcome="required fields missing")
+            run.log("parse", "incomplete", err, parser=settings.PARSER)
+            out["incomplete"] = out["warning"] = err
+            return out
+        if err:
+            out["failed"] = fail(run, "parse", err)
+            return out
+    run.log("parse", "ok", "parsed with the Perfox parser", parser=settings.PARSER)
+    out["parsed"] = parsed
+    out["warning"] = "no masked PDF is made with the Perfox parser"
     return out
 
 

@@ -116,7 +116,7 @@ check("tool descriptions don't promise a fixed file size", "5 MB" not in tools["
 
 r = o["rohit"]
 check("a resume is accepted, parsed with the configured parser and its profile created",
-      r["ok"] and r["decision"] == "accepted" and r["parser"] == "questlight" and r["profile_created"] and r["profile"]["candidate_id"].startswith("CAN-STUB"), r)
+      r["ok"] and r["decision"] == "accepted" and r["parser"] == "perfox" and r["profile_created"] and r["profile"]["candidate_id"].startswith("CAN-STUB"), r)
 check("the agent gets a short candidate summary", r["candidate"]["name"] == "Rohit Verma" and r["candidate"]["email"] == "rohit.verma.test1@example.com"
       and r["candidate"]["experience"] == "7 years 4 months" and "Python" in r["candidate"]["skills"])
 check("...and not the full parsed JSON", "workExperience" not in json.dumps(r) and "redacted" not in r)

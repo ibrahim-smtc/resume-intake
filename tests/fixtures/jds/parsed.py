@@ -1,4 +1,4 @@
-"""What Questlight's JD parser (POST /parsing/jd) returns, for the tests. QA is a real answer from the dev parser for the
+"""What the JD parser (POST /parsing/jd) returns, for the tests. QA is a real answer from the dev parser for the
 invented QA JD in generate.py; JAVA and BRIEF are hand-made in the same shape."""
 import copy
 

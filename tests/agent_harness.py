@@ -29,7 +29,7 @@ def start(parsed_by_stem: dict, files: dict = None, token: str = "test-token-123
     files: stem -> bytes served for https://files.test/<stem> (default: a fake resume that passes the junk check)."""
     os.environ["MCP_TOKEN"] = token
     from app.agent import downloads
-    from app.intake import matching, parser_questlight, questlight
+    from app.intake import matching, parser_perfox, questlight
     from app.main import app
     from fixtures import jobs
 
@@ -37,7 +37,7 @@ def start(parsed_by_stem: dict, files: dict = None, token: str = "test-token-123
     resume = (RESUMES / "Rohit_Verma_Python_Backend.pdf").read_bytes()
     served = {"invoice": (JUNK_FILES / "j06_invoice.pdf").read_bytes(), **(files or {})}
 
-    async def fake_parse(client, name, data, ext):
+    async def fake_parse(name, data, ext):
         fakes.parse_calls.append(name)
         if fakes.parse_delay:
             await asyncio.sleep(fakes.parse_delay)
@@ -70,7 +70,7 @@ def start(parsed_by_stem: dict, files: dict = None, token: str = "test-token-123
             return data, downloads.file_name_for(file_name or stem, data), None
         return await real_download(url, file_name)
 
-    parser_questlight.parse = fake_parse
+    parser_perfox.parse_resume = fake_parse
     questlight.create_profile = fake_create
     downloads.download = fake_download
     jobs.prime(matching)

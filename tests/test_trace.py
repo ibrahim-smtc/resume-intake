@@ -7,7 +7,7 @@ import sqlite3
 
 import harness
 
-tmp = harness.isolate(QUESTLIGHT_TOKEN="good-token", PERFOX_API_KEY="test-key", RESUME_PARSER="perfox", QUESTLIGHT_ATTACH_RESUME="true")
+tmp = harness.isolate(QUESTLIGHT_TOKEN="good-token", PERFOX_API_KEY="test-key", QUESTLIGHT_ATTACH_RESUME="true")
 from harness import JUNK_FILES, check, finish, serve  # noqa: E402
 
 from fastapi import FastAPI, Request  # noqa: E402

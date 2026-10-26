@@ -37,8 +37,8 @@ app/
   intake/            the workflow blocks
     documents.py       read text out of a PDF, DOCX, TXT or old Word DOC
     junk.py            "Junk?" rules, and telling a JD from a resume
-    jobs.py            read a JD (Questlight's JD parser), build the Questlight job, create it
-    parser_questlight.py, parser_perfox.py     the two resume parsers (switch: RESUME_PARSER)
+    jobs.py            read a JD (the JD parser), build the Questlight job, create it
+    parser_perfox.py   the resume parser (Perfox's extract_structured)
     questlight.py      fit a parsed resume to Questlight's rules, create the profile
     corrections.py     details a recruiter supplies for what a resume lacked
     matching.py        match open roles (and the scoring both directions use)
@@ -79,7 +79,7 @@ All of them are in [.env.example](.env.example), with what each means. The ones 
 | Setting | What for |
 |---|---|
 | `QUESTLIGHT_TOKEN` | Questlight API token (lasts 10 days). Without it no profile is created and no jobs are read |
-| `RESUME_PARSER` | `questlight` (default) or `perfox` (temporary stand-in) |
+| `PERFOX_API_KEY`, `PERFOX_BASE_URL` | the Perfox workspace that reads resumes and JDs (the key needs the `documents:extract` scope) |
 | `MCP_TOKEN` | the bearer token the Perfox agent must send to `/mcp` |
 | `PERFOX_WEBHOOK_URL`, `PERFOX_WEBHOOK_SECRET` | connect the chat page to the Perfox agent (without them the page uploads straight into the pipeline) |
 | `APP_PASSWORD` | optional password for the pages and APIs. Not set = open to anyone with the URL (fine for testing) |
@@ -104,8 +104,8 @@ docs and secrets out of the upload).
 
 1. Put the project in a Git repository and import it in Vercel (or run `vercel` from this folder). No build command is needed.
    Check that `.env` is **not** committed (it is in `.gitignore`).
-2. Under *Settings > Environment Variables* add the settings from `.env.example`: at least `QUESTLIGHT_TOKEN`, `RESUME_PARSER`,
-   `MCP_TOKEN`, `PERFOX_WEBHOOK_URL`, `PERFOX_WEBHOOK_SECRET`, and `PERFOX_API_KEY`.
+2. Under *Settings > Environment Variables* add the settings from `.env.example`: at least `QUESTLIGHT_TOKEN`, `PERFOX_API_KEY`,
+   `PERFOX_BASE_URL`, `MCP_TOKEN`, `PERFOX_WEBHOOK_URL` and `PERFOX_WEBHOOK_SECRET`.
    `APP_PASSWORD` is optional: without it the pages and APIs are open to anyone with the URL, which means anyone can create
    profiles in Questlight with your token. Set it before sharing the link. `/parsing/*` has no login at all for now, with or
    without a password, because many people in the office are testing it: every call spends Perfox credits, so put a login on it

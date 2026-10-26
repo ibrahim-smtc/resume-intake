@@ -1,7 +1,7 @@
-"""The JD blocks: read a job description with Questlight's JD parser, turn it into a Questlight job, and create it.
+"""The JD blocks: read a job description with the JD parser (this app's /parsing/jd, which uses Perfox), turn it into a Questlight job, and create it.
 
 The calls are the ones Questlight's own web app makes on its Create Job page (research notes: docs/notes.md, kept local):
-  POST {PARSING_BASE_URL}/jd                       a JD (PDF file, or text) -> JSON. No login; AI inside Questlight.
+  POST {PARSING_BASE_URL}/jd                       a JD (PDF file, or text) -> JSON. No login; the AI is Perfox's.
   GET  /location/resolve-ids?country&state&city   place names -> the ids a job stores
   GET  /clients, GET /teams/leaders               who the client and the business head can be
   GET  /jobs/check-duplicates                     same title + client + city already open?
@@ -70,10 +70,10 @@ def _parser_error(resp: httpx.Response) -> str:
     try:
         body = resp.json()
     except ValueError:
-        return f"Questlight's JD parser returned HTTP {resp.status_code}"
+        return f"The JD parser returned HTTP {resp.status_code}"
     err = body.get("error") if isinstance(body, dict) else None
     msg = (err.get("message") if isinstance(err, dict) else err) or (body.get("message") if isinstance(body, dict) else None)
-    return f"Questlight's JD parser couldn't read it: {msg}" if msg else f"Questlight's JD parser returned HTTP {resp.status_code}"
+    return f"The JD parser couldn't read it: {msg}" if msg else f"The JD parser returned HTTP {resp.status_code}"
 
 
 async def parse(name: str, data: bytes, ext: str, text: str):
@@ -81,22 +81,20 @@ async def parse(name: str, data: bytes, ext: str, text: str):
     anything else (DOCX, TXT, old .doc, pasted text) as the text we already read out of it."""
     form = {"jd_text": "" if ext == ".pdf" else text[:TEXT_LIMIT]}
     files = {"file": (name, data, "application/pdf")} if ext == ".pdf" else None
-    from app.intake import parser_questlight  # the parsing service takes one request at a time; share its queue
     try:
-        async with parser_questlight._slot:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(settings.PARSER_TIMEOUT_S)) as client:
-                resp = await client.post(f"{settings.PARSING_BASE_URL}/jd", data=form, files=files)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(settings.PARSER_TIMEOUT_S)) as client:
+            resp = await client.post(f"{settings.PARSING_BASE_URL}/jd", data=form, files=files)
     except httpx.TimeoutException:
-        return None, f"Questlight's JD parser didn't answer within {settings.PARSER_TIMEOUT_S}s"
+        return None, f"The JD parser didn't answer within {settings.PARSER_TIMEOUT_S}s"
     except httpx.HTTPError as exc:
-        return None, f"couldn't reach Questlight's JD parser ({type(exc).__name__})"
+        return None, f"couldn't reach the JD parser ({type(exc).__name__})"
     tracing.current().set(http_status=resp.status_code)
     if resp.status_code != 200:
         return None, _parser_error(resp)
     try:
         body = resp.json()
     except ValueError:
-        return None, "Questlight's JD parser sent back something that isn't JSON"
+        return None, "The JD parser sent back something that isn't JSON"
     if not isinstance(body, dict) or body.get("success") is False or body.get("error"):
         return None, _parser_error(resp)
     return body, None

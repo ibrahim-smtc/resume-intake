@@ -380,7 +380,7 @@ async def process_job_description(file_url: str = "", file_name: str = "", text:
 
     Pass EITHER the attached file (file_url exactly as received, and file_name if known; PDF, DOCX, TXT or DOC) OR, when
     the recruiter pasted the JD into the chat, the JD's text as `text` (copy it exactly, don't summarise). It runs in a
-    fixed order: checks it is a JD, reads it with Questlight's JD parser, checks Questlight for the same job already open,
+    fixed order: checks it is a JD, reads it with the JD parser, checks Questlight for the same job already open,
     creates the job (status Active), starts Questlight's own matching, then ranks the candidates already in Questlight and
     puts the best 3 on the new job at the Screening stage. A file that turns out to be a resume is taken in as a resume
     instead (kind "resume": report it like process_resume's result). Calling it again for the same attachment or text does

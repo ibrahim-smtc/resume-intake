@@ -7,7 +7,7 @@ The blocks live in app/intake: junk.py tells a JD from a resume, jobs.py reads t
 candidates.py ranks the candidates already in Questlight. This module runs them in order, writes the audit log and the trace,
 and shapes the result. The agent's process_job_description and create_job tools call it, and so does the upload page.
 
-AI is used only to read the JD (Questlight's JD parser). Questlight's own create call also uses AI inside it, to write the
+AI is used only to read the JD (the JD parser). Questlight's own create call also uses AI inside it, to write the
 job's summary and screening questions; that is Questlight's doing, not ours.
 """
 from pathlib import Path
@@ -78,7 +78,7 @@ async def parse_and_prepare(run: audit.Run, name: str, data, ext: str, text: str
         parsed, err = await jobs.parse(name, data or b"", ext, text)
         if err:
             return None, _fail(run, "jd_parse", err)
-    run.log("jd_parse", "ok", "read with Questlight's JD parser")
+    run.log("jd_parse", "ok", "read with the JD parser")
     details = jobs.from_parsed(parsed or {})
     with tracing.span("look up client, place, business head") as s:
         open_jobs, _ = await matching.fetch_open_jobs()
