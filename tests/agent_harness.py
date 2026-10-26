@@ -29,7 +29,8 @@ def start(parsed_by_stem: dict, files: dict = None, token: str = "test-token-123
     files: stem -> bytes served for https://files.test/<stem> (default: a fake resume that passes the junk check)."""
     os.environ["MCP_TOKEN"] = token
     from app.agent import downloads
-    from app.intake import matching, parser_perfox, questlight
+    from app.intake import matching, questlight
+    from app.parsing import service
     from app.main import app
     from fixtures import jobs
 
@@ -70,7 +71,7 @@ def start(parsed_by_stem: dict, files: dict = None, token: str = "test-token-123
             return data, downloads.file_name_for(file_name or stem, data), None
         return await real_download(url, file_name)
 
-    parser_perfox.parse_resume = fake_parse
+    service.parse_resume = fake_parse
     questlight.create_profile = fake_create
     downloads.download = fake_download
     jobs.prime(matching)

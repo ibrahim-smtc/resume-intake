@@ -44,7 +44,8 @@ os.environ["QUESTLIGHT_BASE_URL"] = questlight.url + "/api"
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import pipeline  # noqa: E402
-from app.intake import matching, parser_perfox  # noqa: E402
+from app.intake import matching  # noqa: E402
+from app.parsing import service  # noqa: E402
 from app.observability import audit  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -56,7 +57,7 @@ async def stub(name, data, ext):
     return copy.deepcopy(current["parsed"]), None
 
 
-parser_perfox.parse_resume = stub
+service.parse_resume = stub
 
 
 def upload(parsed, pdf="r01_standard.pdf"):

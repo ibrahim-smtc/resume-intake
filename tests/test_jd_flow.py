@@ -36,13 +36,6 @@ state = {"parsed": QA, "parse_calls": [], "creates": [], "create_status": 201, "
 mock = FastAPI()
 
 
-@mock.post("/parsing/jd")
-async def parse_jd(request: Request):
-    form = await request.form()
-    state["parse_calls"].append({"text": str(form.get("jd_text") or ""), "file": getattr(form.get("file"), "filename", None)})
-    return state["parsed"]
-
-
 @mock.get("/api/location/resolve-ids")
 async def resolve(city: str = "", state_: str = "", country: str = ""):
     ids = PLACES.get(city.lower(), ("101", None, None))
@@ -115,7 +108,6 @@ async def change_status(body: dict):
 
 server = serve(mock)
 os.environ["QUESTLIGHT_BASE_URL"] = server.url + "/api"
-os.environ["PARSING_BASE_URL"] = server.url + "/parsing"     # read when settings is imported: set before the app loads
 os.environ["MATCHING_BASE_URL"] = server.url + "/matching"
 payload = base64.urlsafe_b64encode(json.dumps({"user_id": RECRUITER, "tenant_id": "t1"}).encode()).decode().rstrip("=")
 os.environ["QUESTLIGHT_TOKEN"] = f"eyJhbGciOiJIUzUxMiJ9.{payload}.signature"
@@ -129,6 +121,16 @@ fakes = ah.start({"rohit": ROHIT},
                         "invoice": (JUNK_FILES / "j06_invoice.pdf").read_bytes(), "letter": (JUNK_FILES / "c01_cover_letter.pdf").read_bytes()})
 
 from app.intake import candidates, jobs, matching  # noqa: E402
+from app.parsing import service  # noqa: E402
+
+
+async def fake_parse_jd(name, data, ext, text):
+    """The JD parser: records what it was given (a PDF goes up as the file, anything else as text) and answers state["parsed"]."""
+    state["parse_calls"].append({"text": "" if ext == ".pdf" else text[:20000], "file": name if ext == ".pdf" else None})
+    return state["parsed"], None
+
+
+service.parse_jd = fake_parse_jd
 from app.observability import audit  # noqa: E402
 
 JAVA_JD = ("Job title: Java Backend Developer at ICICI Bank, Bengaluru. We are looking for a developer with 4-8 years of experience "

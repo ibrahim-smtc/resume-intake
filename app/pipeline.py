@@ -12,8 +12,9 @@ candidate is put on for screening: the best 3 matches, no more.
 from pathlib import Path
 
 from app import settings
-from app.intake import documents, junk, matching, parser_perfox, questlight
+from app.intake import documents, junk, matching, questlight
 from app.observability import audit, tracing
+from app.parsing import service
 
 RESUME_TYPES = (".pdf", ".docx")  # what the resume parser reads
 ALLOWED_TYPES = (".pdf", ".docx", ".txt", ".doc")  # what is taken in: a TXT or DOC may turn out to be a JD (app/job_pipeline.py)
@@ -84,15 +85,15 @@ def junk_step(run: audit.Run, name: str, ext: str, data: bytes):
 
 
 async def parse_step(run: audit.Run, name: str, ext: str, data: bytes) -> dict:
-    """The parse block: Perfox's extract_structured (app/intake/parser_perfox.py). Returns a dict with
+    """The parse block: Perfox's extract_structured, through app/parsing/service.py. Returns a dict with
     parsed (the resume JSON, or None), failed (the finished error result, or None),
     incomplete (a "name/email/phone missing" message: a real resume, but there is no JSON), and
     masked_b64 / warning (no masked PDF is made with this parser)."""
     out = {"parsed": None, "failed": None, "incomplete": None, "masked_b64": None, "warning": None}
     with tracing.span("parse resume", kind="llm") as s:
         s.set_usage(provider="perfox")
-        parsed, err = await parser_perfox.parse_resume(name, data, ext)
-        if err and err.startswith(parser_perfox.MISSING_MESSAGE):
+        parsed, err = await service.parse_resume(name, data, ext)
+        if err and err.startswith(service.MISSING_MESSAGE):
             # A real resume that lacks name/email/phone: there is no JSON to load, so the recruiter is asked for them.
             s.set(outcome="required fields missing")
             run.log("parse", "incomplete", err, parser=settings.PARSER)

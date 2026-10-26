@@ -28,13 +28,14 @@ import httpx  # noqa: E402
 from harness import RESUMES, check, finish  # noqa: E402
 
 from app import settings  # noqa: E402
-from app.intake import matching, parser_perfox, questlight  # noqa: E402
+from app.intake import matching, questlight  # noqa: E402
+from app.parsing import service  # noqa: E402
 
 headers = questlight.auth_headers()
 check("QUESTLIGHT_TOKEN is set (needed for the checks below)", headers is not None)
 
 
-parsed, err = asyncio.run(parser_perfox.parse_resume("Rohit_Verma_Python_Backend.pdf", (RESUMES / "Rohit_Verma_Python_Backend.pdf").read_bytes(), ".pdf"))
+parsed, err = asyncio.run(service.parse_resume("Rohit_Verma_Python_Backend.pdf", (RESUMES / "Rohit_Verma_Python_Backend.pdf").read_bytes(), ".pdf"))
 check("Perfox's real parser reads a fake resume", err is None and parsed.get("name") == "Rohit Verma", err)
 
 jobs, err = asyncio.run(matching.fetch_open_jobs())
@@ -70,13 +71,13 @@ if headers:
           status == 400 and any("jobTitle" in e for e in errors) and any("companyName" in e for e in errors)
           and any("institution" in e for e in errors) and any("graduation_year" in e for e in errors), errors)
 
-# ---- job descriptions: the real JD parser (stateless), and a job body Questlight MUST reject ----
+# ---- job descriptions: the real JD parser, Perfox (stateless), and a job body Questlight MUST reject ----
 from app.intake import jobs  # noqa: E402
 
 jd_text = (ROOT / "tests" / "fixtures" / "jds" / "files" / "d03_jd_structured.txt").read_text(encoding="utf-8")  # invented
-parsed_jd, err = asyncio.run(jobs.parse("jd.txt", b"", ".txt", jd_text))
+parsed_jd, err = asyncio.run(service.parse_jd("jd.txt", b"", ".txt", jd_text))
 parsed_jd = parsed_jd or {}
-check("Questlight's real JD parser reads an invented JD", err is None and "QA" in str(parsed_jd.get("jobPositionTitle")) and parsed_jd.get("primarySkills"), err)
+check("the real JD parser (Perfox) reads an invented JD", err is None and "QA" in str(parsed_jd.get("jobPositionTitle")) and parsed_jd.get("primarySkills"), err)
 if headers:
     details = jobs.from_parsed(parsed_jd or {})
     built = jobs.review({**details, "client_id": "00000000-0000-4000-8000-000000000000", "business_head_id": "00000000-0000-4000-8000-000000000000",

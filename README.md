@@ -37,12 +37,13 @@ app/
   intake/            the workflow blocks
     documents.py       read text out of a PDF, DOCX, TXT or old Word DOC
     junk.py            "Junk?" rules, and telling a JD from a resume
-    jobs.py            read a JD (the JD parser), build the Questlight job, create it
-    parser_perfox.py   the resume parser (Perfox's extract_structured)
+    jobs.py            turn a parsed JD into a Questlight job, and create it
     questlight.py      fit a parsed resume to Questlight's rules, create the profile
     corrections.py     details a recruiter supplies for what a resume lacked
     matching.py        match open roles (and the scoring both directions use)
     candidates.py      the other direction: rank the candidates already in Questlight for a job
+  parsing/           the parser: service.py reads a resume or a JD with Perfox's extract_structured (the pipeline calls it
+                     directly), router.py serves /parsing/resume, /jd, /mask and /health; resume/, jd/ and masking/ hold the rules
   agent/             the Perfox agent integration
     mcp_app.py         the MCP server and its token-checked /mcp endpoint
     tools.py           the 9 tools the agent can call

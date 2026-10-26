@@ -1,14 +1,13 @@
-"""The JD blocks: read a job description with the JD parser (this app's /parsing/jd, which uses Perfox), turn it into a Questlight job, and create it.
+"""The JD blocks: turn a parsed job description (app/parsing/service.py reads it with Perfox) into a Questlight job, and create it.
 
 The calls are the ones Questlight's own web app makes on its Create Job page (research notes: docs/notes.md, kept local):
-  POST {PARSING_BASE_URL}/jd                       a JD (PDF file, or text) -> JSON. No login; the AI is Perfox's.
   GET  /location/resolve-ids?country&state&city   place names -> the ids a job stores
   GET  /clients, GET /teams/leaders               who the client and the business head can be
   GET  /jobs/check-duplicates                     same title + client + city already open?
   POST /jobs/create                               the job (JSON)
   POST {MATCHING_BASE_URL}/semantic-score/job/id  start Questlight's own matching, as its UI does right after a create
 
-Everything here apart from the parser is plain rules. The job is built in a "details" dict (one key per thing a recruiter
+Everything here is plain rules. The job is built in a "details" dict (one key per thing a recruiter
 can supply); review() turns it into Questlight's create body and lists what is still missing, so the agent can ask.
 Required by Questlight's API (found by probing with bodies it must reject): title, comments, summary, client, business
 head, primary and assigned recruiters, openings, posting date, skill domains, primary skills, industry, min/max experience,
@@ -33,7 +32,6 @@ TIMEOUT_S = 60
 CREATE_TIMEOUT_S = 150   # Questlight writes the job summary and screening questions with AI inside the create call
 MATCHING_TIMEOUT_S = 20  # starting Questlight's matching; if it takes longer it is left running
 CACHE_S = 600
-TEXT_LIMIT = 20000       # characters of JD text sent to the parser
 STATUS = "Active"        # a new job is open at once, so it can be matched and screened
 PRIORITIES = ("High", "Medium", "Low")
 WORK_MODES = {"remote": "Remote", "wfh": "Remote", "work from home": "Remote", "hybrid": "Hybrid",
@@ -62,42 +60,6 @@ ASKS = {
 }
 
 _cache: dict = {"clients": (0.0, None), "leaders": (0.0, None), "places": {}}
-
-
-# ---------- reading the JD ----------
-
-def _parser_error(resp: httpx.Response) -> str:
-    try:
-        body = resp.json()
-    except ValueError:
-        return f"The JD parser returned HTTP {resp.status_code}"
-    err = body.get("error") if isinstance(body, dict) else None
-    msg = (err.get("message") if isinstance(err, dict) else err) or (body.get("message") if isinstance(body, dict) else None)
-    return f"The JD parser couldn't read it: {msg}" if msg else f"The JD parser returned HTTP {resp.status_code}"
-
-
-async def parse(name: str, data: bytes, ext: str, text: str):
-    """Returns (parsed JD JSON, None) or (None, error message). A PDF goes up as the file, like Questlight's page does;
-    anything else (DOCX, TXT, old .doc, pasted text) as the text we already read out of it."""
-    form = {"jd_text": "" if ext == ".pdf" else text[:TEXT_LIMIT]}
-    files = {"file": (name, data, "application/pdf")} if ext == ".pdf" else None
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(settings.PARSER_TIMEOUT_S)) as client:
-            resp = await client.post(f"{settings.PARSING_BASE_URL}/jd", data=form, files=files)
-    except httpx.TimeoutException:
-        return None, f"The JD parser didn't answer within {settings.PARSER_TIMEOUT_S}s"
-    except httpx.HTTPError as exc:
-        return None, f"couldn't reach the JD parser ({type(exc).__name__})"
-    tracing.current().set(http_status=resp.status_code)
-    if resp.status_code != 200:
-        return None, _parser_error(resp)
-    try:
-        body = resp.json()
-    except ValueError:
-        return None, "The JD parser sent back something that isn't JSON"
-    if not isinstance(body, dict) or body.get("success") is False or body.get("error"):
-        return None, _parser_error(resp)
-    return body, None
 
 
 # ---------- the details a job is built from ----------

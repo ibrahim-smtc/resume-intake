@@ -15,6 +15,7 @@ from pathlib import Path
 from app import settings
 from app.intake import candidates, documents, junk, jobs, matching, questlight
 from app.observability import audit, tracing
+from app.parsing import service
 
 JD_TYPES = (".pdf", ".docx", ".txt", ".doc")
 PASTED = "pasted text"
@@ -71,11 +72,11 @@ def check_input(run: audit.Run, name: str, data, text):
 
 
 async def parse_and_prepare(run: audit.Run, name: str, data, ext: str, text: str):
-    """Reads the JD with Questlight's parser and resolves what it names (client, place, business head).
+    """Reads the JD with the Perfox parser and resolves what it names (client, place, business head).
     Returns (details, failure)."""
     with tracing.span("parse JD", kind="llm") as s:
-        s.set_usage(provider="questlight")
-        parsed, err = await jobs.parse(name, data or b"", ext, text)
+        s.set_usage(provider="perfox")
+        parsed, err = await service.parse_jd(name, data or b"", ext, text)
         if err:
             return None, _fail(run, "jd_parse", err)
     run.log("jd_parse", "ok", "read with the JD parser")

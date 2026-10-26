@@ -42,7 +42,7 @@ os.environ["QUESTLIGHT_BASE_URL"] = QUESTLIGHT_API
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.intake import parser_perfox  # noqa: E402
+from app.parsing import service  # noqa: E402
 from app.main import app  # noqa: E402
 from fixtures.parsed import PRIYA, variant  # noqa: E402
 
@@ -55,7 +55,7 @@ async def stub(name, data, ext):
     return copy.deepcopy(current["parsed"]), None
 
 
-parser_perfox.parse_resume = stub
+service.parse_resume = stub
 
 
 def run(label, parsed, status, api_calls, **expect):

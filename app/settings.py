@@ -18,13 +18,10 @@ if not os.getenv("SKIP_DOTENV"):  # the tests set this, so they can never pick u
 ON_VERCEL = bool(os.getenv("VERCEL"))
 STATIC_DIR = ROOT / "app" / "static"
 
-# The resume parser is Perfox's extract_structured (app/intake/parser_perfox.py). PARSING_BASE_URL is where JDs are read:
-# this app's own /parsing/jd, which calls Perfox as well.
+# Resumes and JDs are read by Perfox's extract_structured (app/parsing/service.py).
 PARSER = "perfox"
-PARSING_BASE_URL = os.getenv("PARSING_BASE_URL", "https://resume-intake-five.vercel.app/parsing")
-PARSER_TIMEOUT_S = 60
 
-# Perfox API credentials (for /parsing endpoints)
+# Perfox API credentials
 PERFOX_BASE_URL = os.getenv("PERFOX_BASE_URL", "").rstrip("/")
 PERFOX_API_KEY = os.getenv("PERFOX_API_KEY", "")
 
