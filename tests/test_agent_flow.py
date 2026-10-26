@@ -13,7 +13,6 @@ harness.isolate()
 from harness import check, finish  # noqa: E402
 
 import agent_harness as ah  # noqa: E402
-from fixtures.jobs import OPEN_JOB_COUNT  # noqa: E402
 from fixtures.parsed import HARISH, ROHIT  # noqa: E402
 
 # Questlight's real wording: the second sentence mentions "name" too, which must not count as a missing detail
@@ -93,10 +92,9 @@ async def main():
         o["l4_creates"] = len(fakes.creates) - n
         o["l4_titles"] = [j["jobTitle"] for j in fakes.creates[-1]["workExperience"]]
         o["l5"] = await call("match_roles", file_id=token)
-        o["l6"] = await call("process_resume", file_url=link)                                  # asked again after creation
         b = len(fakes.parse_calls)
-        o["l7"] = await call("parse_resume", file_id=token)
-        o["l7_parses"] = len(fakes.parse_calls) - b
+        o["l6"] = await call("process_resume", file_url=link)                                  # asked again after creation
+        o["l6_parses"] = len(fakes.parse_calls) - b
         o["l8"] = await call("match_roles", file_id="deadbeef")
 
         # 6b. the caller asks again while the first intake is still running (Perfox's tool timeout is 30 s): one parse, one result
@@ -108,12 +106,6 @@ async def main():
         o["twin_parses"] = len(fakes.parse_calls) - before
         fakes.parse_delay = 0
         o["twin_later"] = await call("process_resume", file_url=link3, file_name="fill.pdf")
-
-        # 7. open roles
-        o["roles"] = await call("list_open_roles", limit=3)
-        o["roles_java"] = await call("list_open_roles", search="java", limit=100)
-        o["roles_none"] = await call("list_open_roles", search="zzzqqq-no-such-title")
-        o["roles_clamped"] = await call("list_open_roles", limit=1000)
     return o
 
 
@@ -170,7 +162,7 @@ check("the recruiter's title reached Questlight", o["l4_titles"] == ["Senior Dat
 check("a later turn: match_roles by token returns the roles", o["l5"]["ok"] and o["l5"]["roles_status"] in ("ok", "no_strong_match") and len(o["l5"]["top_roles"]) >= 1, o["l5"])
 check("a later turn: process_resume shows the created profile and the roles, and writes nothing",
       o["l6"]["profile_created"] is True and o["l6"]["missing_items"] == [] and len(o["l6"]["top_roles"]) >= 1 and "next" not in o["l6"] and o["l4_creates"] == 1, o["l6"])
-check("parse_resume by token returns the saved data and does NOT parse again", o["l7"]["ok"] and o["l7"]["info_complete"] and o["l7_parses"] == 0, (o["l7"].get("info_complete"), o["l7_parses"]))
+check("...and it does NOT parse the file again", o["l6_parses"] == 0, o["l6_parses"])
 check("a nonsense reference says what to pass instead", o["l8"]["ok"] is False and "file_url" in o["l8"]["error"], o["l8"])
 
 check("a second call while the first intake runs joins it: the file is parsed ONCE and both callers get the same result",
@@ -178,13 +170,6 @@ check("a second call while the first intake runs joins it: the file is parsed ON
       and o["twin_a"]["profile"]["status"] == o["twin_b"]["profile"]["status"], (o["twin_parses"], o["twin_a"], o["twin_b"]))
 check("...and asking once more afterwards says where it stands, without parsing again",
       "already processed" in o["twin_later"]["reason"] and o["twin_later"]["file_id"] == o["twin_a"]["file_id"], o["twin_later"])
-
-r = o["roles"]
-check("open roles: the real count and a short sample", r["ok"] and r["open_roles"] == OPEN_JOB_COUNT and r["all_open_roles"] == OPEN_JOB_COUNT and len(r["shown"]) == 3
-      and all(x["title"] and x["job_id"] for x in r["shown"]), r)
-check("open roles: a title search narrows the count", o["roles_java"]["open_roles"] == 1 and o["roles_java"]["shown"][0]["job_id"] == "JOB-J1", o["roles_java"])
-check("open roles: no match gives zero and an empty list", o["roles_none"]["open_roles"] == 0 and o["roles_none"]["shown"] == [])
-check("open roles: the limit is capped", len(o["roles_clamped"]["shown"]) <= 30)
 
 # the audit log and traces hold no names, companies or values the recruiter typed
 conn = sqlite3.connect(os.environ["AUDIT_DB"])

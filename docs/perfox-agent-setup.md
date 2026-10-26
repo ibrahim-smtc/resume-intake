@@ -38,25 +38,20 @@ Perfox must be able to open `https://<host>/mcp`. Two ways:
 | Cache TTL | 0 |
 | Rate limit | 10 per minute is plenty |
 
-After registering, check that **14 tools** were discovered. **Click Rediscover after any change to a tool** (its name, its
+After registering, check that **9 tools** were discovered. **Click Rediscover after any change to a tool** (its name, its
 parameters or its description): Perfox keeps a cached copy.
 
 | Tool | What it does | Writes to Questlight? |
 |---|---|---|
 | `process_resume` | The whole intake in one call, in a fixed order. The default. | yes (creates a profile) |
-| `check_junk` | Step 1: is this a resume? Returns a `file_id` only for accepted files | no |
-| `parse_resume` | Step 2: read the resume into structured data (AI call) | no |
 | `provide_missing_details` | Stores details the recruiter typed for what the resume lacked (a job title, say) | no |
-| `create_profile` | Step 3: create the Questlight profile. Refuses if a required detail is missing; `fill_missing=true` saves "Not specified" instead | **yes** |
-| `match_roles` | Step 4: the top 3 open jobs; needs a profile (new, or already existing). For a newly created profile with a strong match it also adds the candidate to those 3 jobs at the Screening stage (retries only failures) | **yes** (new profiles only) |
-| `get_intake_summary` | Counts for the last N days from the audit log | no |
-| `list_recent_intakes` | The latest uploads, newest first | no |
+| `create_profile` | Create the Questlight profile. Refuses if a required detail is missing; `fill_missing=true` saves "Not specified" instead | **yes** |
+| `match_roles` | The top 3 open jobs; needs a profile (new, or already existing). For a newly created profile with a strong match it also adds the candidate to those 3 jobs at the Screening stage (retries only failures) | **yes** (new profiles only) |
 | `process_job_description` | A JD (attached PDF, DOCX, TXT or DOC, or pasted text) in, a Questlight job out: reads it with Questlight's JD parser, checks for the same open job, creates the job, starts Questlight's matching, and screens the best candidates (strong matches only, up to 3) | **yes** (creates a job, adds candidates to it) |
 | `provide_job_details` | Stores what the recruiter typed for what the JD lacked (the client, the salary range, the city...) | no |
 | `create_job` | Creates the job once nothing is missing (or with `allow_duplicate=true` when the recruiter said so), then screens candidates as above | **yes** |
 | `find_candidates_for_job` | Which candidates in Questlight fit an open job best (job ID or title; top 3 by default, max 10). Scores by rules; hired and onboarding candidates, and those already on the job, are left out | no |
 | `add_candidates_to_job` | Puts chosen candidates on a job at the Screening stage (max 10 per call). Refuses hired/onboarding and unknown candidates. Only after the recruiter agrees | **yes** |
-| `list_open_roles` | How many roles are open in Questlight, with a short sample and an optional title search | no |
 
 How they behave:
 
@@ -138,8 +133,7 @@ CANDIDATES FOR A JOB
 - NEVER add anyone to a job on your own. Ask "Shall I add them to this job's Screening stage?" and only after a clear yes call add_candidates_to_job with exactly the candidate_ids they chose. Report each result (screened, already, failed, refused, not_found).
 
 OTHER QUESTIONS
-- "How many roles are open", "any Python roles": use list_open_roles. "What came in today / this week": use get_intake_summary or list_recent_intakes.
-- Use check_junk, parse_resume and match_roles only when the recruiter asks for exactly that step.
+- Use create_profile and match_roles on their own only when the recruiter asks for exactly that step.
 
 ALWAYS
 - Keep replies short: a few lines per resume, scores as numbers out of 100. Follow HOW YOU SOUND in every reply, including follow-up questions about a candidate you already processed.

@@ -45,7 +45,7 @@ app/
     candidates.py      the other direction: rank the candidates already in Questlight for a job
   agent/             the Perfox agent integration
     mcp_app.py         the MCP server and its token-checked /mcp endpoint
-    tools.py           the 14 tools the agent can call
+    tools.py           the 9 tools the agent can call
     intakes.py         the agent's short-term memory of the files it has taken in
     chat_bridge.py     the page's text box -> the agent's webhook
     formatting.py, downloads.py, tool_guide.py

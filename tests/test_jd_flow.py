@@ -7,6 +7,7 @@ import base64
 import json
 import math
 import os
+from datetime import datetime, timedelta, timezone
 import re
 import sqlite3
 
@@ -222,7 +223,9 @@ async def main():
         o["mapped_status"] = state["status_calls"][:]
         state.update(on_job=[], already=set())
 
-        o["summary"] = await call("get_intake_summary", days=1)
+        since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+        counts = audit.summary(since)
+        o["summary"] = {"jobs": counts.get("create_job", {}), "job_descriptions": counts.get("jd_check", {})}
         o["tools"] = {t.name for t in (await s.list_tools()).tools}
     return o
 

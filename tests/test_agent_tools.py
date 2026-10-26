@@ -71,34 +71,24 @@ async def main():
         out["rohit"] = await call("process_resume", file_url="https://files.test/rohit.pdf", file_name="Rohit_Verma.pdf")
         out["junk"] = await call("process_resume", file_url="https://files.test/invoice")
         out["bad_url"] = await call("process_resume", file_url="http://insecure.test/x.pdf")
-        out["summary"] = await call("get_intake_summary", days=1)
-        out["recent"] = await call("list_recent_intakes", limit=5)
 
-        # ---- the step tools, in order, with the rules enforced whatever the order ----
-        junk = await call("check_junk", file_url="https://files.test/ananya.pdf", file_name="Ananya.pdf")
-        fid = junk.get("file_id")
-        out["step_junk"] = junk
+        # ---- the step tools, on a file process_resume already took in ----
+        step = await call("process_resume", file_url="https://files.test/ananya.pdf", file_name="Ananya.pdf")
+        fid = step.get("file_id")
+        out["step"] = step
         n = len(fakes.creates)
-        out["early_create"] = await call("create_profile", file_id=fid)
-        out["early_match"] = await call("match_roles", file_id=fid)
-        out["parse"] = await call("parse_resume", file_id=fid)
-        out["parse2"] = await call("parse_resume", file_id=fid)
-        out["match_no_profile"] = await call("match_roles", file_id=fid)
-        out["create"] = await call("create_profile", file_id=fid)
-        out["create2"] = await call("create_profile", file_id=fid)
+        out["create_again"] = await call("create_profile", file_id=fid)
         out["creates_here"] = len(fakes.creates) - n
         out["late_provide"] = await call("provide_missing_details", file_id=fid, answers=[{"id": "job_title:0", "value": "x"}])
         out["match"] = await call("match_roles", file_id=fid)
         out["fid"] = fid
-        out["junk_step"] = await call("check_junk", file_url="https://files.test/invoice")
-        out["bogus"] = [await call("parse_resume", file_id="deadbeef0000"), await call("create_profile", file_id="deadbeef0000"),
+        out["bogus"] = [await call("create_profile", file_id="deadbeef0000"),
                         await call("match_roles", file_id="deadbeef0000"),
                         await call("provide_missing_details", file_id="deadbeef0000", answers=[])]
 
         # ---- a duplicate can still be matched ----
         fakes.create_mode = "duplicate"
-        d = (await call("check_junk", file_url="https://files.test/dup.pdf"))["file_id"]
-        await call("parse_resume", file_id=d)
+        d = (await call("process_resume", file_url="https://files.test/dup.pdf"))["file_id"]
         out["dup_create"] = await call("create_profile", file_id=d)
         out["dup_match"] = await call("match_roles", file_id=d)
 
@@ -110,19 +100,19 @@ async def main():
 
         # ---- expiry ----
         intakes._intakes[fid].born -= 31 * 60  # type: ignore[index]
-        out["expired"] = await call("parse_resume", file_id=fid)
+        out["expired"] = await call("create_profile", file_id=fid)
         out["parse_calls_total"] = len(fakes.parse_calls)
     return out
 
 
 o = asyncio.run(main())
 tools = o["tools"]
-check("the agent sees the 14 tools", set(tools) == {"process_resume", "check_junk", "parse_resume", "provide_missing_details", "create_profile",
-                                                   "match_roles", "list_open_roles", "get_intake_summary", "list_recent_intakes",
+check("the agent sees the 9 tools", set(tools) == {"process_resume", "provide_missing_details", "create_profile",
+                                                   "match_roles",
                                                    "find_candidates_for_job", "add_candidates_to_job",
                                                    "process_job_description", "provide_job_details", "create_job"}, sorted(tools))
 check("process_resume's schema needs a file_url", tools["process_resume"].inputSchema.get("required") == ["file_url"])
-check("tool descriptions don't promise a fixed file size", "5 MB" not in tools["process_resume"].description and "5 MB" not in tools["check_junk"].description)
+check("tool descriptions don't promise a fixed file size", "5 MB" not in tools["process_resume"].description)
 
 r = o["rohit"]
 check("a resume is accepted, parsed with the configured parser and its profile created",
@@ -136,26 +126,14 @@ check("a created profile keeps a handle, with nothing left to do", r.get("file_i
 check("the invoice (a name without an extension) is recognised as a PDF and judged junk, with no handle",
       o["junk"]["decision"] == "junk" and o["junk"]["file"] == "invoice.pdf" and o["junk"]["profile_created"] is False and "file_id" not in o["junk"], o["junk"])
 check("a bad link gives decision 'error' with the reason", o["bad_url"]["decision"] == "error" and "https" in o["bad_url"]["error"])
-s = o["summary"]
-check("the summary counts what came in (2 files: 1 accepted, 1 junk, 1 profile created)", s["files_received"] == 2 and s["screening"] == {"accepted": 1, "junk": 1} and s["profiles"] == {"created": 1}, s)
-rec = o["recent"]["intakes"]
-check("recent intakes: newest first, with the channel 'perfox agent'", len(rec) == 2 and rec[0]["file"] == "invoice.pdf" and rec[1]["candidate_id"].startswith("CAN-STUB")
-      and all(x["channel"] == "perfox agent" for x in rec), rec)
 
 fid = o["fid"]
-check("check_junk accepts a resume and hands out a file_id", o["step_junk"]["decision"] == "accepted" and fid)
-check("create_profile before parsing is refused, and so is matching", o["early_create"]["ok"] is False and "parse_resume first" in o["early_create"]["error"]
-      and o["early_match"]["ok"] is False and "no Questlight profile" in o["early_match"]["error"])
-check("parse_resume reads the candidate", o["parse"]["ok"] and o["parse"]["candidate"]["name"] == "Rohit Verma" and o["parse"]["info_complete"])
-check("...and a second call returns the saved result without parsing again", o["parse2"]["candidate"] == o["parse"]["candidate"]
-      and fakes.parse_calls.count("Ananya.pdf") == 1, fakes.parse_calls)
-check("matching before a profile exists is refused", o["match_no_profile"]["ok"] is False)
-check("create_profile creates once; repeating it returns the saved result and does not reach Questlight again",
-      o["create"]["profile_created"] and o["create2"]["profile"] == o["create"]["profile"] and o["creates_here"] == 1, o["creates_here"])
+check("process_resume hands out a file_id for the step tools", o["step"]["decision"] == "accepted" and fid)
+check("create_profile on a file whose profile exists returns the saved result and does not reach Questlight again",
+      o["create_again"]["profile"] == o["step"]["profile"] and o["creates_here"] == 0, o["creates_here"])
 check("answers can't be added once the profile exists", o["late_provide"]["ok"] is False and "already exists" in o["late_provide"]["error"])
-check("match_roles then returns scored roles", o["match"]["ok"] and o["match"]["roles_status"] in ("ok", "no_strong_match") and len(o["match"]["top_roles"]) >= 1)
+check("match_roles returns scored roles", o["match"]["ok"] and o["match"]["roles_status"] in ("ok", "no_strong_match") and len(o["match"]["top_roles"]) >= 1)
 check("match_roles also reports the Screening step, in total and per job", "screening" in o["match"] and all("screening" in r for r in o["match"]["top_roles"]), o["match"])
-check("a junk file gets no handle", "file_id" not in o["junk_step"] and o["junk_step"]["decision"] == "junk")
 check("made-up references are refused by every step tool, saying what to pass instead",
       all(b["ok"] is False and "no file found" in b["error"] and "file_url" in b["error"] for b in o["bogus"]), o["bogus"])
 check("a duplicate profile is reported, nothing changed, and can still be matched", o["dup_create"]["profile"]["status"] == "duplicate" and o["dup_create"]["profile_created"] is False
@@ -168,8 +146,8 @@ check("an expired file_id is refused", o["expired"]["ok"] is False and "expired"
 conn = sqlite3.connect(os.environ["AUDIT_DB"])
 steps = [x[0] for x in conn.execute("SELECT step FROM audit_log WHERE run_id = ? ORDER BY id", (fid,))]
 conn.close()
-check("one run id for the step-by-step file: junk check, parse, load into Questlight, matching", steps[:4] == ["junk_check", "parse", "load_questlight", "match_roles"], steps)
-trace = tracing.get_trace(f"{fid}-parse_resume")
-check("each tool call has its own trace, id = run id + tool, readable with the file name", trace and trace["file"] == "Ananya.pdf" and "parse resume" in [x["name"] for x in trace["spans"]])
-check("recent traces list the step traces with the file name", any(x["trace_id"] == f"{fid}-check_junk" and x["file"] == "Ananya.pdf" for x in tracing.recent_traces(100)))
+check("one run id for the file: junk check, parse, load into Questlight, matching", steps[:4] == ["junk_check", "parse", "load_questlight", "match_roles"], steps)
+trace = tracing.get_trace(fid)
+check("process_resume's trace id is the run id, readable with the file name", trace and trace["file"] == "Ananya.pdf" and "parse resume" in [x["name"] for x in trace["spans"]])
+check("a step tool's trace id is run id + tool", any(x["trace_id"] == f"{fid}-match_roles" and x["file"] == "Ananya.pdf" for x in tracing.recent_traces(100)))
 finish()
