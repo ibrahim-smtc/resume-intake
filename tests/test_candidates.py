@@ -5,6 +5,7 @@ import asyncio
 import json
 import math
 import os
+from datetime import datetime, timedelta, timezone
 import sqlite3
 
 import harness
@@ -126,8 +127,9 @@ async def main():
         out["many"] = await call("add_candidates_to_job", job="JOB-J1", candidate_ids=[f"CAN-F-{i:03d}" for i in range(11)])
         out["ambiguous_add"] = await call("add_candidates_to_job", job="developer", candidate_ids=["CAN-T-001"])
 
-        out["summary"] = await call("get_intake_summary", days=1)
-        out["recent"] = await call("list_recent_intakes", limit=10)
+        since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+        out["summary"] = {"files_received": audit.run_count(since), "added_to_jobs": audit.summary(since).get("add_to_screening", {})}
+        out["recent"] = {"intakes": audit.recent_runs(10)}
 
         # Questlight's candidate list failing
         state["find_status"] = 500
@@ -154,7 +156,7 @@ check("...with the 'can't see who is already on the job' warning and the confirm
 check("no contact details or internal fields reach the agent", all(x not in json.dumps(f) for x in ("@example.com", "+91-", "otp", "1990-01-01", "c-asha")), f)
 check("a job title works too, and top_k limits the list", o["find2"]["ok"] and len(o["find2"]["candidates"]) == 2)
 check("an ambiguous title asks which job instead of guessing", o["title"]["ok"] and o["title"]["needs_choice"] and {j["job_id"] for j in o["title"]["jobs"]} == {"JOB-J1", "JOB-J7"}, o["title"])
-check("an unknown job is a clear error", o["nojob"]["ok"] is False and "list_open_roles" in o["nojob"]["error"])
+check("an unknown job is a clear error", o["nojob"]["ok"] is False and "no open job matches" in o["nojob"]["error"])
 check("a closed job can't be used (only open jobs are)", o["closed"]["ok"] is False)
 
 check("add_candidates_to_job puts each chosen candidate on the job, by the long IDs, once", [(c["applicantId"], c["jobId"], c["stages"], c["status"]) for c in o["add_calls"]]

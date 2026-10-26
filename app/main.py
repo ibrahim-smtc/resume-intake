@@ -14,14 +14,16 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import pipeline, settings
+from app import settings, pipeline
 from app.agent import chat_bridge, mcp_app, tool_guide
 from app.observability import audit, tracing
+from app.parsing.router import router as parsing_router
 from app.security import AccessGuard
 
 # No auto-generated /docs, /redoc or /openapi.json: nothing needs them, and this app may face the internet.
 app = FastAPI(title="Resume intake", lifespan=mcp_app.lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(AccessGuard)
+app.include_router(parsing_router)
 app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 
 

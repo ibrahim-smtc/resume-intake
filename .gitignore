@@ -18,6 +18,3 @@ tools/
 # docs/notes.md has internal API findings and test-data details.
 sources/
 docs/notes.md
-# The parsing service's own build notes record the same kind of internal findings.
-perfox-parsers/updates.md
-perfox-parsers/BUILD_SPEC.md

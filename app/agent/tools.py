@@ -1,29 +1,25 @@
 """The tools the Perfox agent can call (MCP). They hold no logic of their own: they run the pipeline's steps
-(app/pipeline.py) and read the audit log.
+(app/pipeline.py).
 
 - process_resume: the whole pipeline in one call, in a fixed order. The default.
 - provide_missing_details: when a resume lacks something Questlight requires (a job title, say) the recruiter is asked,
   and this stores the answer on the server; create_profile then creates the profile. (A recruiter who says "go ahead
   without it" gets create_profile(fill_missing=true), which saves "Not specified".)
-- check_junk, parse_resume, create_profile, match_roles: the same blocks one at a time (match_roles also does the Screening
-  step after a strong match, as the pipeline does), for a recruiter who asks for
-  just one step. The server keeps the file and the parsed resume between calls (see intakes.py), and the rules are
-  checked here whatever order the agent calls them in: nothing is parsed unless the junk check accepted the file, no
-  profile is created unless the parsed resume has every required detail, and matching needs a profile.
+- create_profile, match_roles: the later blocks on their own, for a recruiter who asks for just one step (match_roles also
+  does the Screening step after a strong match, as the pipeline does). The server keeps the file and the parsed resume
+  between calls (see intakes.py), and the rules are checked here whatever order the agent calls them in: no profile is
+  created unless the parsed resume has every required detail, and matching needs a profile.
 - process_job_description: a job description (attached, or pasted as text) in, a Questlight job out, screened with the
   best candidates (app/job_pipeline.py). provide_job_details and create_job finish a JD that lacked something.
   process_resume and process_job_description each hand over to the other when a file turns out to be the other kind.
 - find_candidates_for_job, add_candidates_to_job: the other direction. For an open job, rank the candidates already in
   Questlight (read-only); then, once the recruiter agrees, put chosen ones on the job at the Screening stage.
-- get_intake_summary, list_recent_intakes: read the audit log. list_open_roles: Questlight's open jobs.
 
 The text in each tool's docstring is what the agent reads. After changing one, click Rediscover on the integration in
 Perfox. Add every new tool to tool_guide.py too.
 """
 import asyncio
 import contextlib
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from app import job_pipeline, pipeline, settings
 from app.agent import chat_bridge, downloads, formatting, intakes
@@ -61,8 +57,8 @@ async def process_resume(file_url: str, file_name: str = "") -> dict:
     Questlight, ranking Questlight's open jobs for the new candidate, then (for a strong match) putting the candidate on
     the best 3 jobs at the Screening stage in Questlight. Call it once per file. If you call it
     again for the same attachment, it does NOT run again: it returns where that file stands now (so it is safe, and a
-    way to get the file_id back). Only use the step tools (check_junk,
-    parse_resume, create_profile, match_roles) when the recruiter asks for one specific step.
+    way to get the file_id back). Only use the step tools (create_profile,
+    match_roles) when the recruiter asks for one specific step.
 
     If the resume lacks something Questlight requires (profile.status "not_created" with missing_items, e.g. "a job
     title for the job at Acme"), no profile is created yet and the result has a file_id: ASK the recruiter for each
@@ -166,77 +162,18 @@ def _resume_intake(ref: str):
 
 
 @mcp.tool()
-async def check_junk(file_url: str, file_name: str = "") -> dict:
-    """STEP 1 of 4 (only when the recruiter wants just the screening): check whether a file is a resume.
-
-    Reads the file locally (no AI) and decides: "accepted" (looks like a resume), "junk" (not a resume),
-    "needs_review" (unclear, a person must look) or "error" (unreadable, wrong type, too large).
-    When accepted, the result includes a file_id that parse_resume, create_profile and match_roles need.
-    For a normal "take in this resume" request use process_resume instead."""
-    data, name, err = await downloads.download(file_url, file_name)
-    if err:
-        return {"ok": False, "decision": "error", "error": err}
-    ext = Path(name).suffix.lower()
-    run = audit.Run(name, data, CHANNEL)
-    async with _traced(run, "check_junk") as trace:
-        text, verdict, failure = pipeline.junk_step(run, name, ext, data)
-    if failure:
-        return {"ok": False, "decision": "error", "file": name, "error": failure["error"], "trace_id": trace.id}
-    out = {"ok": True, "file": name, "decision": verdict.decision, "reason": verdict.reason, "trace_id": trace.id}
-    if verdict.decision == "accepted":
-        fresh = intakes.Intake(run, name, ext, data, text)
-        fresh.upload = _upload_token(file_url)
-        intakes.remember(fresh)
-        out["file_id"] = run.run_id
-        out["next"] = "parse_resume(file_id) reads the resume; create_profile and match_roles come after it"
-    else:
-        out["next"] = "nothing more to do with this file: it was not accepted as a resume"
-    return out
-
-
-@mcp.tool()
-async def parse_resume(file_id: str) -> dict:
-    """STEP 2 of 4: read an accepted resume into structured data (name, contact, experience, skills, education).
-
-    file_id comes from check_junk (or the process_resume result); if you no longer have it, pass the attachment's
-    file_url instead. Uses the configured resume parser (an AI call, about 6-15 seconds). Reports
-    info_complete and the missing fields. Nothing is written to Questlight yet. Safe to repeat: the second call
-    returns the saved result without parsing again."""
-    intake, err = _resume_intake(file_id)
-    if err or intake is None:
-        return {"ok": False, "error": err}
-    async with _traced(intake.run, "parse_resume") as trace:
-        if not intake.parse_done:
-            p = await pipeline.parse_step(intake.run, intake.name, intake.ext, intake.data)
-            if p["failed"]:
-                return {"ok": False, "file_id": intake.id, "error": p["failed"]["error"], "trace_id": trace.id}
-            intake.parse_done, intake.parsed, intake.incomplete = True, p["parsed"], p["incomplete"]
-    if intake.parsed is None:
-        return {"ok": True, "file_id": intake.id, "parser": settings.PARSER, "info_complete": False, "candidate": None,
-                "missing_required": [formatting.UNREADABLE], "missing_items": questlight.unreadable_items(intake.incomplete),
-                "missing_recommended": [], "note": intake.incomplete, "trace_id": trace.id,
-                "next": "ask the recruiter for ONLY the items in missing_items (nothing else is known to be missing), then provide_missing_details(file_id, answers): the resume is then read"}
-    checked = questlight.review(intake.parsed)
-    return {"ok": True, "file_id": intake.id, "parser": settings.PARSER, "candidate": formatting.candidate(pipeline.redact(intake.parsed)),
-            "info_complete": not checked["missing"], "missing_required": checked["missing"], "missing_items": checked["items"],
-            "missing_recommended": questlight.missing_recommended(checked["applicant"]), "trace_id": trace.id,
-            "next": "create_profile(file_id)" if not checked["missing"] else
-                    "ask the recruiter for each missing item, then provide_missing_details(file_id, answers)"}
-
-
-@mcp.tool()
 async def provide_missing_details(file_id: str, answers: list[dict[str, str]]) -> dict:
     """Store details the recruiter supplied for what the resume lacked. Nothing is written to Questlight by this tool:
     call create_profile(file_id) afterwards.
 
-    file_id comes from the process_resume (or check_junk) result; if you no longer have it, pass the attachment's
+    file_id comes from the process_resume result; if you no longer have it, pass the attachment's
     file_url instead. answers is a list of {"id": ..., "value": ...}, using the ids from
     missing_items, for example {"id": "job_title:1", "value": "Data Engineer"}. The ids are job_title:N, job_company:N,
     degree:N, institution:N (N = the entry's number as given in missing_items), and name, email, phone, address or
     skills (a comma-separated list). Use ONLY ids from missing_items and only values the recruiter actually said:
     never guess a value. Returns what is still missing.
 
-    When process_resume/parse_resume says the parser could not read the candidate's email or phone (missing_items has
+    When process_resume says the parser could not read the candidate's email or phone (missing_items has
     only those), nothing else of the resume has been read yet: ask for just those items. Once all are given this tool
     reads the resume itself, and the result then has the candidate and anything else still missing. If reading fails the
     result says why (ok false); calling again with answers=[] retries."""
@@ -244,7 +181,7 @@ async def provide_missing_details(file_id: str, answers: list[dict[str, str]]) -
     if err or intake is None:
         return {"ok": False, "error": err}
     if not intake.parse_done:
-        return {"ok": False, "file_id": intake.id, "error": "this file has not been parsed yet: call parse_resume first"}
+        return {"ok": False, "file_id": intake.id, "error": "this file has not been parsed yet: call process_resume first"}
     if intake.profile and intake.profile["status"] in ("created", "duplicate"):
         return {"ok": False, "file_id": intake.id, "error": "a profile already exists for this file, so there is nothing "
                 "left to complete (this tool can't edit an existing Questlight profile)"}
@@ -288,9 +225,9 @@ async def provide_missing_details(file_id: str, answers: list[dict[str, str]]) -
 
 @mcp.tool()
 async def create_profile(file_id: str, fill_missing: bool = False) -> dict:
-    """STEP 3 of 4: create the candidate's profile in Questlight from the parsed resume. THIS WRITES TO QUESTLIGHT.
+    """Create the candidate's profile in Questlight from the parsed resume. THIS WRITES TO QUESTLIGHT.
 
-    file_id comes from the process_resume (or check_junk) result; if you no longer have it, pass the attachment's
+    file_id comes from the process_resume result; if you no longer have it, pass the attachment's
     file_url instead (the same file). The resume must
     have been parsed. Refuses (nothing is written) when a required detail is missing: ask the recruiter for it and
     store the answer with provide_missing_details first. Only when the recruiter says to go ahead without it, pass
@@ -302,7 +239,7 @@ async def create_profile(file_id: str, fill_missing: bool = False) -> dict:
     if err or intake is None:
         return {"ok": False, "error": err}
     if not intake.parse_done:
-        return {"ok": False, "file_id": intake.id, "error": "this file has not been parsed yet: call parse_resume first"}
+        return {"ok": False, "file_id": intake.id, "error": "this file has not been parsed yet: call process_resume first"}
     async with _traced(intake.run, "create_profile") as trace:
         if intake.parsed is None:  # the parser could not read name, email or phone, and nothing has been supplied
             profile = {"status": "not_created", "message": pipeline.NOT_CREATED,
@@ -324,11 +261,11 @@ async def create_profile(file_id: str, fill_missing: bool = False) -> dict:
 
 @mcp.tool()
 async def match_roles(file_id: str) -> dict:
-    """STEP 4 of 4: rank Questlight's open jobs for a candidate (best 3, score 0-100, under 40 = no strong match).
+    """Rank Questlight's open jobs for a candidate (best 3, score 0-100, under 40 = no strong match).
     For a candidate whose profile was just created, a strong match also puts them on those 3 jobs at the Screening stage
     in Questlight (see `screening` in the result); calling this again retries only the jobs that failed.
 
-    file_id comes from the process_resume (or check_junk) result; if you no longer have it, pass the attachment's
+    file_id comes from the process_resume result; if you no longer have it, pass the attachment's
     file_url instead (a candidate whose resume was taken in with process_resume can be matched at any time within 30
     minutes, no profile step needed). The candidate must have been parsed and have a Questlight profile (just created by
     create_profile, or one that already existed: status "duplicate"). Refuses otherwise. THIS WRITES TO QUESTLIGHT only
@@ -361,7 +298,7 @@ async def _resolve_job(ref: str):
         return None, {"ok": True, "needs_choice": True, "matching_jobs": len(choices),
                       "message": "more than one open job fits: ask the recruiter which one, then call again with its job_id",
                       "jobs": [_job_line(j) for j in choices[:10]]}
-    return None, {"ok": False, "error": "no open job matches that (only open jobs can be used): list_open_roles(search) finds them"}
+    return None, {"ok": False, "error": "no open job matches that (only open jobs can be used): check the job ID or title"}
 
 
 def _job_line(job: dict) -> dict:
@@ -561,57 +498,3 @@ async def create_job(jd_id: str, allow_duplicate: bool = False) -> dict:
     if hint:
         out["next"] = hint
     return out
-
-
-@mcp.tool()
-async def list_open_roles(search: str = "", limit: int = 10) -> dict:
-    """How many job roles are open in Questlight right now, and a sample of them (title, job id, location).
-
-    search (optional) keeps only roles whose title contains that text, e.g. "python". limit is how many to list (max 30).
-    open_roles is the total count (of all open roles, or of those matching search). Read-only; the list is refreshed
-    from Questlight every 10 minutes. Questlight's dev data contains some test jobs."""
-    jobs, err = await matching.fetch_open_jobs()
-    if err:
-        return {"ok": False, "error": err}
-    wanted = search.strip().lower()
-    chosen = [j for j in jobs if not wanted or wanted in str(j.get("jobPositionTitle") or "").lower()]
-    limit = max(1, min(int(limit), 30))
-    return {"ok": True, "open_roles": len(chosen), "all_open_roles": len(jobs), "search": search.strip() or None,
-            "shown": [{"title": str(j.get("jobPositionTitle") or "").strip(), "job_id": j.get("jobId"),
-                       "location": ", ".join(str(j[k]) for k in ("city", "state") if j.get(k) and not str(j[k]).isdigit())}
-                      for j in chosen[:limit]]}
-
-
-@mcp.tool()
-async def get_intake_summary(days: int = 1) -> dict:
-    """Counts of resumes received over the last N days (1 = last 24 hours, 7 = last week, max 90), from the audit log.
-
-    screening: accepted / junk / needs_review. profiles: created / duplicate / not_created (info missing) / failed.
-    matching: ok (a strong match found) / no_strong_match / failed. job_screening: screened / partial / failed / skipped
-    (candidates put on their top jobs at the Screening stage). added_to_jobs: how often recruiters added candidates to a
-    job themselves (screened / partial / failed). job_descriptions: JDs taken in (by decision). jobs: created /
-    not_created (details missing) / duplicate_found / failed. jd_screening: candidates screened for new jobs. errors: files that could not be read or parsed.
-    """
-    days = max(1, min(int(days), 90))
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
-    counts = audit.summary(since)
-    return {"period": f"last {days} day(s)", "since_utc": since, "files_received": audit.run_count(since),
-            "screening": counts.get("junk_check", {}), "profiles": counts.get("load_questlight", {}),
-            "matching": counts.get("match_roles", {}), "job_screening": counts.get("screen_top_roles", {}),
-            "added_to_jobs": counts.get("add_to_screening", {}),
-            "job_descriptions": counts.get("jd_check", {}), "jobs": counts.get("create_job", {}),
-            "jd_screening": counts.get("screen_candidates", {}),
-            "errors": {step: n["error"] for step, n in counts.items() if "error" in n}}
-
-
-@mcp.tool()
-async def list_recent_intakes(limit: int = 10) -> dict:
-    """The most recent resumes received (newest first, max 50): when, file name, channel, the screening decision,
-    the profile outcome, the Questlight candidate ID if one was created, and the last step's note."""
-    runs = audit.recent_runs(max(1, min(int(limit), 50)))
-    return {"intakes": [{"received_utc": r["ts"], "file": r["file"], "channel": r["channel"],
-                         "screening": r["steps"].get("junk_check", r["steps"].get("intake")),
-                         "profile": r["steps"].get("load_questlight"), "matching": r["steps"].get("match_roles"),
-                         "job_screening": r["steps"].get("screen_top_roles"),
-                         "job": r["steps"].get("create_job"),
-                         "candidate_id": r["record_id"], "note": r["last_reason"]} for r in runs]}

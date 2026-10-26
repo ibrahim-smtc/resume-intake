@@ -84,8 +84,10 @@ async def parse(name: str, data: bytes, ext: str, text: str):
     from app.intake import parser_questlight  # the parsing service takes one request at a time; share its queue
     try:
         async with parser_questlight._slot:
+            target_url = f"{settings.PARSING_BASE_URL}/jd"
+            headers = settings.parsing_auth_headers(target_url)
             async with httpx.AsyncClient(timeout=httpx.Timeout(settings.PARSER_TIMEOUT_S)) as client:
-                resp = await client.post(f"{settings.PARSING_BASE_URL}/jd", data=form, files=files)
+                resp = await client.post(target_url, data=form, files=files, headers=headers)
     except httpx.TimeoutException:
         return None, f"Questlight's JD parser didn't answer within {settings.PARSER_TIMEOUT_S}s"
     except httpx.HTTPError as exc:

@@ -1,4 +1,4 @@
-"""perfox-parsers/fix_jd.py
+"""app/parsing/jd/fix_jd.py
 Deterministic post-processing and normalization for parsed Job Descriptions.
 Produces exactly 30 standardized fields matching the Questlight specification.
 """

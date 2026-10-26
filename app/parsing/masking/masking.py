@@ -1,4 +1,4 @@
-"""perfox-parsers/masking.py
+"""app/parsing/masking/masking.py
 Masks a resume PDF the way Questlight's parsing-ms POST /parsing/mask does: the ORIGINAL PDF is edited in place. The page looks the same,
 the text stays searchable, and each contact detail is replaced by blank space. No AI is involved, so it costs no tokens.
 
@@ -22,7 +22,7 @@ import threading
 import pypdfium2 as pdfium
 import pypdfium2.raw as raw
 
-from fix_normlization import phone_spans
+from app.parsing.resume.fix_normlization import phone_spans
 
 LINK_ANNOTATION = 2  # PDFium's annotation type number for a link (this library has no name for it)
 SAME_LINE = 3.0      # points: pieces whose tops differ by less than this are on one line

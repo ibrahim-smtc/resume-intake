@@ -7,6 +7,8 @@ import base64
 import json
 import math
 import os
+from datetime import datetime, timedelta, timezone
+import re
 import sqlite3
 
 import harness
@@ -221,7 +223,9 @@ async def main():
         o["mapped_status"] = state["status_calls"][:]
         state.update(on_job=[], already=set())
 
-        o["summary"] = await call("get_intake_summary", days=1)
+        since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+        counts = audit.summary(since)
+        o["summary"] = {"jobs": counts.get("create_job", {}), "job_descriptions": counts.get("jd_check", {})}
         o["tools"] = {t.name for t in (await s.list_tools()).tools}
     return o
 
@@ -304,8 +308,9 @@ check("the summary counts JDs and jobs", sum(summary["jobs"].values()) >= 8 and 
       and summary["job_descriptions"].get("job_description", 0) >= 6, summary)
 check("the agent sees the three JD tools", {"process_job_description", "provide_job_details", "create_job"} <= o["tools"])
 raw = "\n".join(sqlite3.connect(os.environ["AUDIT_DB"]).iterdump())
-check("no candidate names, JD text or salaries in the audit database", not any(w in raw for w in ("Asha Rao", "Ravi Sales", "Spring Boot", "1500000", "Selenium")),
-      [w for w in ("Asha Rao", "Ravi Sales", "Spring Boot", "1500000", "Selenium") if w in raw])
+# The dump holds epoch timestamps, so a bare "1500000" can turn up inside one by chance: match the salary as a whole number.
+leaks = [w for w in ("Asha Rao", "Ravi Sales", "Spring Boot", "Selenium") if w in raw] + (["1500000"] if re.search(r"(?<![\d.])1500000(?![\d])", raw) else [])
+check("no candidate names, JD text or salaries in the audit database", not leaks, leaks)
 steps = {r["step"] for r in audit.recent(1000)}
 check("each step is in the audit log", {"jd_check", "jd_parse", "create_job", "job_matching", "find_candidates_for_new_job", "screen_candidates", "job_details"} <= steps, steps)
 finish()

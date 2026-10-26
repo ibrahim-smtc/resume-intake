@@ -1,4 +1,4 @@
-"""perfox-parsers/verify_identity.py
+"""app/parsing/resume/verify_identity.py
 Checks the name, e-mail and phone number Perfox returned against the text of the document itself.
 
 Perfox seems to read a PDF as a picture, so it can misread a letter ("Iyer" becomes "lyer"), change an e-mail by a character, or
@@ -9,7 +9,7 @@ nothing is ever invented.
 import re
 from difflib import SequenceMatcher
 
-from fix_normlization import EMAIL_RE, phone_numbers
+from app.parsing.resume.fix_normlization import EMAIL_RE, phone_numbers
 
 MATCH_AT = 0.85   # how alike two spellings must be (0 to 1) before one is taken for a misreading of the other
 TOP_LINES = 15    # a name is read from the top of the document only

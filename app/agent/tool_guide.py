@@ -51,22 +51,7 @@ TOOL_GUIDE: list[GuideGroup] = [
                  "Questlight. I only do this when you say so.",
          "try": "Yes, add the first two to that job"},
     ]},
-    {"group": "Open roles and activity", "items": [
-        {"title": "Open roles", "tools": ["list_open_roles"], "writes": False,
-         "does": "How many roles are open in Questlight right now, and which ones. You can search by title.",
-         "try": "How many roles are open?  /  Any Python roles?"},
-        {"title": "What came in", "tools": ["get_intake_summary", "list_recent_intakes"], "writes": False,
-         "does": "Counts for today, this week or any period up to 90 days (accepted, junk, profiles created), and the latest "
-                 "resumes with what happened to each.",
-         "try": "What came in this week?  /  Show the last 10 resumes"},
-    ]},
     {"group": "One step at a time (advanced)", "items": [
-        {"title": "Check if a file is a resume", "tools": ["check_junk"], "writes": False,
-         "does": "Screening only: tells you if a file is a resume, junk, or needs a person to look. Nothing is created.",
-         "try": "Attach a file and ask: is this a resume?"},
-        {"title": "Read a resume without creating a profile", "tools": ["parse_resume"], "writes": False,
-         "does": "Reads name, contact, experience and skills, and shows what is missing. Nothing is created.",
-         "try": "Attach a file and say: just read it, don't create a profile"},
         {"title": "Match a candidate to open roles", "tools": ["match_roles"], "writes": True,
          "does": "Ranks the best 3 open roles for a candidate who already has a profile in Questlight. For a candidate "
                  "whose profile I just created, it also adds them to those 3 roles at the Screening stage.",
