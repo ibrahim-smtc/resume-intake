@@ -9,5 +9,4 @@ sources
 data
 *.db
 __pycache__
-requirements-dev.txt
 run.py
