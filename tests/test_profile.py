@@ -89,7 +89,7 @@ run("bad email", variant(PRIYA, email="priya at example"), "not_created", 0, mis
 run("no name", variant(PRIYA, name=" "), "not_created", 0, missing_fields=["name"])
 run("no skills", variant(PRIYA, technical_skills=[], soft_skills=[]), "not_created", 0, missing_fields=["skills"])
 run("no education", variant(PRIYA, education=[]), "not_created", 0, missing_fields=["education"])
-run("jobs without start dates only", variant(PRIYA, workExperience=[{"jobTitle": "Dev", "companyName": "X", "startDate": ""}]),
+run("jobs without start dates only (listed, but none can be sent)", variant(PRIYA, workExperience=[{"jobTitle": "Dev", "companyName": "X", "startDate": ""}]),
     "not_created", 0, missing_fields=["workExperience"])
 run("several missing at once", variant(PRIYA, email="", technical_skills=[], soft_skills=[], education=[]), "not_created", 0,
     missing_fields=["email", "skills", "education"])
@@ -99,6 +99,9 @@ check("...is reported by name, so the recruiter can be asked", r["missing_fields
 
 # ---- fine to create ----
 run("no phone (only recommended)", variant(PRIYA, phoneNumber=""), "created", 1, missing_fields=[], missing_recommended=["phoneNumber"])
+run("a fresher: no work experience at all", variant(PRIYA, workExperience=[], total_experience={"years": 0, "months": 0}), "created", 1, missing_fields=[])
+check("...the profile goes to Questlight with an empty work history array, not without the key",
+      calls[-1]["data"]["workExperience"] == [] and calls[-1]["data"]["total_experience"] == {"years": 0, "months": 0}, calls[-1]["data"])
 run("duplicate email", variant(PRIYA, email="dup@example.com"), "duplicate", 1)
 
 # ---- settings and failures ----

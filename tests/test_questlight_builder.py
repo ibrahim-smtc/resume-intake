@@ -64,13 +64,20 @@ check("review(fill=True) has nothing missing, and says what it filled", filled["
 # ---- what blocks a profile outright ----
 gone = {"name": " ", "email": "not an email", "technical_skills": [], "workExperience": [], "education": []}
 rev = questlight.review(gone)
-check("name, email, skills, work history and education are all required",
-      sorted(i["id"] for i in rev["items"]) == ["education", "email", "name", "skills", "workExperience"], rev["items"])
+check("name, email, skills and education are required (work history is not: a fresher has none)",
+      sorted(i["id"] for i in rev["items"]) == ["education", "email", "name", "skills"], rev["items"])
 check("only name, email and skills can be typed in", {i["id"]: i["can_supply"] for i in rev["items"]} ==
-      {"name": True, "email": True, "skills": True, "workExperience": False, "education": False})
-check("a job without a valid start date is not sent (and so cannot satisfy 'work history')",
-      questlight.review({"name": "A", "email": "a@b.co", "technical_skills": ["x"], "education": [{"degree": "d", "institution": "i"}],
-                         "workExperience": [{"jobTitle": "t", "companyName": "c", "startDate": "garbage"}]})["items"][0]["id"] == "workExperience")
+      {"name": True, "email": True, "skills": True, "education": False})
+FRESHER = {"name": "A", "email": "a@b.co", "technical_skills": ["x"], "education": [{"degree": "d", "institution": "i"}], "workExperience": []}
+rev = questlight.review(FRESHER)
+check("a fresher (no jobs on the resume) has nothing missing", rev["missing"] == [] and rev["items"] == [], rev["items"])
+check("...and the empty work history is still sent, as an array (the API wants the key)", rev["applicant"]["workExperience"] == [])
+check("a resume without the work history key at all is a fresher too", questlight.review({k: v for k, v in FRESHER.items() if k != "workExperience"})["missing"] == [])
+check("an empty job entry is not a job", questlight.review({**FRESHER, "workExperience": [{}, {"jobTitle": "", "startDate": ""}]})["missing"] == [])
+check("a job without a valid start date is not sent, and the resume still lists it: held back, not saved without history",
+      questlight.review({**FRESHER, "workExperience": [{"jobTitle": "t", "companyName": "c", "startDate": "garbage"}]})["items"][0]["id"] == "workExperience")
+check("...and 'go ahead' (fill) does not change that: there is no entry to fill",
+      questlight.review({**FRESHER, "workExperience": [{"jobTitle": "t", "companyName": "c", "startDate": "garbage"}]}, fill=True)["missing"] == ["workExperience"])
 check("phone is only recommended", questlight.missing_recommended({"phoneNumber": ""}) == ["phoneNumber"]
       and questlight.missing_recommended({"phoneNumber": "+91 98765 43210"}) == [])
 
