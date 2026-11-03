@@ -9,6 +9,7 @@ Perfox agent's tools (app/agent) and the tests all call process_file() or the in
 AI is used only to read the resume (the parser). Every other decision is plain code, including which jobs the
 candidate is put on for screening: the best 3 matches, no more.
 """
+import asyncio
 from pathlib import Path
 
 from app import settings
@@ -220,18 +221,24 @@ async def run_pipeline(run: audit.Run, name: str, ext: str, data: bytes, state: 
         return fail(run, "intake", f"this looks like a resume, but resumes are read from PDF or DOCX only ({ext} given): "
                     "ask for it as a PDF or DOCX")
 
-    p = await parse_step(run, name, ext, data)
-    if p["failed"]:
-        return p["failed"]
-    if state is not None:
-        state.update(text=text, parsed=p["parsed"], incomplete=p["incomplete"])
-    if p["incomplete"]:
-        profile = {"status": "not_created", "message": NOT_CREATED, "missing_items": questlight.unreadable_items(p["incomplete"])}
-        run.log("load_questlight", profile["status"], profile["message"])
-        return success(name, verdict, None, None, questlight.unreadable_note(p["incomplete"]), ["see note"], [], profile)
-    missing, recommended, profile = await load_into_questlight(run, data, ext, p["parsed"])
-    roles = await match_open_roles(run, p["parsed"], text, profile)
-    return success(name, verdict, p["parsed"], p["masked_b64"], p["warning"], missing, recommended, profile, roles)
+    # Reading the resume takes about 14 s; Questlight's open-jobs list (about 3 s when it is not cached) downloads meanwhile,
+    # so match_open_roles finds it ready instead of waiting for it.
+    warm_up = asyncio.create_task(matching.warm_open_jobs())
+    try:
+        p = await parse_step(run, name, ext, data)
+        if p["failed"]:
+            return p["failed"]
+        if state is not None:
+            state.update(text=text, parsed=p["parsed"], incomplete=p["incomplete"])
+        if p["incomplete"]:
+            profile = {"status": "not_created", "message": NOT_CREATED, "missing_items": questlight.unreadable_items(p["incomplete"])}
+            run.log("load_questlight", profile["status"], profile["message"])
+            return success(name, verdict, None, None, questlight.unreadable_note(p["incomplete"]), ["see note"], [], profile)
+        missing, recommended, profile = await load_into_questlight(run, data, ext, p["parsed"])
+        roles = await match_open_roles(run, p["parsed"], text, profile)
+        return success(name, verdict, p["parsed"], p["masked_b64"], p["warning"], missing, recommended, profile, roles)
+    finally:
+        warm_up.cancel()  # does nothing once it has finished
 
 
 async def process_file(name: str, data: bytes, channel: str = audit.CHANNEL, state: dict | None = None) -> dict:

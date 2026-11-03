@@ -76,6 +76,15 @@ async def fetch_open_jobs():
         return jobs, err
 
 
+async def warm_open_jobs():
+    """Starts the open-jobs download early, so it runs while the resume is still being read and match_roles then finds
+    it cached. Never raises: if the download fails, match_roles asks again and reports the error itself."""
+    try:
+        await fetch_open_jobs()
+    except Exception:  # a background warm-up must not take the run down
+        pass
+
+
 async def _download_open_jobs():
     headers = questlight.auth_headers()
     if not headers:
