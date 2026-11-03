@@ -80,15 +80,17 @@ def upload(fname, data=None, name=None):
 r = upload("r01_standard.pdf")
 t = r["trace"]
 spans = {s["name"]: s for s in t["spans"]}
-expected = ["resume intake", "intake checks", "junk check", "parse resume", "load into Questlight", "POST create-applicant",
+# the open-jobs download starts while the resume is being read (first "fetch open jobs"); matching then finds it cached (second)
+expected = ["resume intake", "intake checks", "junk check", "parse resume", "fetch open jobs", "load into Questlight", "POST create-applicant",
             "match open roles", "fetch open jobs", "score jobs", "screen top roles",
             "POST applicantMatching/create", "POST applicants/change-status",   # the new candidate's status goes to SCREENING once
             "POST applicantMatching/create", "POST applicantMatching/create"]
 check("steps in the right order", [s["name"] for s in t["spans"]] == expected, [s["name"] for s in t["spans"]])
 root = t["spans"][0]
+warm, ready = [s for s in t["spans"] if s["name"] == "fetch open jobs"]
 check("children hang under the right parents",
       spans["POST create-applicant"]["parent_id"] == spans["load into Questlight"]["id"]
-      and spans["fetch open jobs"]["parent_id"] == spans["match open roles"]["id"]
+      and warm["parent_id"] == root["id"] and ready["parent_id"] == spans["match open roles"]["id"]
       and spans["score jobs"]["parent_id"] == spans["match open roles"]["id"]
       and all(spans[n]["parent_id"] == root["id"] for n in ("intake checks", "junk check", "parse resume", "load into Questlight", "match open roles", "screen top roles"))
       and all(s["parent_id"] == spans["screen top roles"]["id"] for s in t["spans"] if s["name"] == "POST applicantMatching/create"))
@@ -97,9 +99,14 @@ check("parse is an llm step with the provider's token counts", p["kind"] == "llm
       and p["provider"] == "perfox" and p["model"] is None)
 check("parse time includes the 300 ms the mock LLM took", p["duration_ms"] >= 300)
 check("totals: 941 tokens, 1 llm call", t["input_tokens"] + t["output_tokens"] == 941 and t["llm_calls"] == 1)
-check("the root's time covers its children", root["duration_ms"] >= sum(s["duration_ms"] for s in t["spans"] if s["parent_id"] == root["id"]) - 1)
+check("the root's time covers its steps one after another (the overlapping download is left out)",
+      root["duration_ms"] >= sum(s["duration_ms"] for s in t["spans"] if s["parent_id"] == root["id"] and s is not warm) - 1)
 check("other steps used no tokens", all(s["input_tokens"] is None for s in t["spans"] if s["kind"] != "llm"))
-check("the first job list came from Questlight, not the cache", spans["fetch open jobs"]["details"].get("from_cache") is False)
+check("the first job list came from Questlight, not the cache", warm["details"].get("from_cache") is False)
+check("...and matching then used it: no second download", ready["details"].get("from_cache") is True and mock_state["jobs_calls"] == 1)
+parse_end = p["offset_ms"] + p["duration_ms"]
+check("the job list downloaded WHILE the resume was being read (it started and finished inside the parse step)",
+      warm["offset_ms"] < parse_end and warm["offset_ms"] + warm["duration_ms"] <= parse_end + 1, (warm["offset_ms"], warm["duration_ms"], parse_end))
 
 saved = client.get(f"/api/trace/{t['trace_id']}").json()
 check("the trace is saved and read back with the same steps", [s["name"] for s in saved["spans"]] == expected and saved["file"] == "r01_standard.pdf")
