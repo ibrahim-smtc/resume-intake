@@ -4,8 +4,10 @@ Calls POST {QUESTLIGHT_BASE_URL}/applicants/create-applicant (multipart: applica
 POST /jobs/applicantMatching/create to put the new candidate on a job at the Screening stage (add_to_screening).
 Hardcoded rules only, no model. The API needs a Bearer JWT with the PROFILE:CREATE permission; see .env.example.
 
-Required by the API: name, email, skills (non-empty), workExperience and education. When any is missing the
-profile is NOT created and the missing fields are reported, so a later step can ask the candidate for them.
+Required here: name, email, skills (non-empty) and education. When any is missing the profile is NOT created and the
+missing fields are reported, so a later step can ask the candidate for them. Work experience may be empty: a fresher's
+resume lists no jobs, and Questlight dev accepts workExperience: [] (the key itself must be present, as an array).
+A resume that lists jobs, none of which can be sent (no valid start date), is still held back, so history is not lost silently.
 """
 import json
 import os
@@ -171,7 +173,7 @@ def build_applicant(parsed: dict, adjusted: list = None, gaps: list = None, fill
     }
     cleaned = _clean(applicant)
     for required_list in ("skills", "workExperience", "education"):
-        cleaned.setdefault(required_list, [])  # the API wants the arrays present even when empty
+        cleaned.setdefault(required_list, [])  # the API wants the arrays present; [] is accepted, a missing key is not
     return cleaned
 
 
@@ -200,7 +202,7 @@ def review(parsed: dict, fill: bool = False, source: str = "manual upload") -> d
     adjusted (what was filled in or shortened). With fill=True the gaps are filled with "Not specified" instead."""
     adjusted, gaps = [], []
     applicant = build_applicant(parsed, adjusted, gaps, fill, source)
-    basics = missing_required(applicant)
+    basics = missing_required(applicant, lists_jobs(parsed))
     # name, email and skills can be typed in by the recruiter; work history and education need a resume that shows them
     items = [{"id": b, "what": b, "for": "the candidate", "can_supply": b in ("name", "email", "skills")} for b in basics]
     gaps = [dict(g, can_supply=True) for g in gaps]
@@ -208,16 +210,26 @@ def review(parsed: dict, fill: bool = False, source: str = "manual upload") -> d
             "missing": basics + [f"{g['what']} for {g['for']}" for g in gaps]}
 
 
-def missing_required(applicant: dict) -> list:
-    """Fields the API requires that this resume doesn't have. Empty list means the profile can be created."""
+def lists_jobs(parsed: dict) -> bool:
+    """True when the resume describes at least one job, even one that cannot be sent (no valid start date).
+    A fresher's resume describes none."""
+    return any(isinstance(j, dict) for j in _clean(parsed.get("workExperience") or []))
+
+
+def missing_required(applicant: dict, has_jobs: bool) -> list:
+    """Fields this resume lacks that a profile needs. Empty list means the profile can be created.
+    Work experience is only missing when the resume lists jobs and none of them could be sent; a fresher has none to send."""
     missing = []
     if not str(applicant.get("name") or "").strip():
         missing.append("name")
     if not EMAIL_RE.match(str(applicant.get("email") or "")):
         missing.append("email")
     for field in ("skills", "workExperience", "education"):
-        if not applicant.get(field):
-            missing.append(field)
+        if applicant.get(field):
+            continue
+        if field == "workExperience" and not has_jobs:
+            continue
+        missing.append(field)
     return missing
 
 

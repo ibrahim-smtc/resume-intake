@@ -62,6 +62,17 @@ if headers:
     status, errors = rejected_for(questlight.build_applicant(nasty, fill=True))
     check("built by our code, the ONLY thing Questlight complains about is the email", status == 400 and errors == ["email must be an email"], errors)
 
+    # A fresher: no jobs at all. Questlight dev accepts an empty workExperience array; a missing key it refuses.
+    fresher = {"name": "ZZ Probe Invalid", "email": "not-an-email", "technical_skills": ["Python"], "workExperience": [],
+               "education": [{"degree": "B.Tech", "institution": "Test University"}]}
+    built = questlight.build_applicant(fresher, fill=True)
+    status, errors = rejected_for(built)
+    check("a fresher is sent with an empty work history, and the ONLY complaint is the email",
+          built["workExperience"] == [] and status == 400 and errors == ["email must be an email"], errors)
+    status, errors = rejected_for({k: v for k, v in built.items() if k != "workExperience"})
+    check("...while a body without the work history key is refused (why the empty array is sent)",
+          status == 400 and "workExperience must be an array" in errors, errors)
+
     # The same shape of data WITHOUT our fixes, to prove this probe can see those complaints at all.
     raw = {"name": "ZZ Probe Invalid", "email": "not-an-email", "phoneNumber": "+91 90000 12345", "skills": ["Python"],
            "workExperience": [{"jobTitle": "Principal " * 15, "companyName": "", "startDate": "2020-01-01T00:00:00.000Z"}],

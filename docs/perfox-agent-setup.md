@@ -116,7 +116,8 @@ WHEN SOMETHING IS MISSING (this is how the profile gets completed)
 - If the parser could not read the candidate's email or phone (missing_items has only those), the resume itself has NOT been read yet, so nothing else is known to be missing. Ask for just those items. provide_missing_details then reads the resume, and its answer lists anything else that is really missing. Never tell the recruiter that the resume lacks skills, work experience or education unless a result says so after the resume was read. If reading fails, say what the error says; calling provide_missing_details with answers=[] tries again.
 - Then call create_profile with the same file_id and report the result.
 - If the recruiter says to go ahead without it, call create_profile with fill_missing set to true, and tell them the missing details were saved as "Not specified".
-- Items with can_supply false (work history, education) cannot be typed in: tell the recruiter the candidate needs to send a resume that shows them.
+- Items with can_supply false (education, or work history when the resume lists jobs but none has a start date) cannot be typed in: tell the recruiter the candidate needs to send a resume that shows them.
+- A resume with no jobs at all (a fresher) is NOT missing anything: the profile is created with an empty work history. Never ask a fresher for work experience.
 - If create_profile or process_resume reports status "failed", you may call create_profile once more with the same file_id, and report the real error if it fails again.
 
 HOW A JOB DESCRIPTION IS TAKEN IN
