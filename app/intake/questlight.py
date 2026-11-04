@@ -141,6 +141,12 @@ def build_applicant(parsed: dict, adjusted: list = None, gaps: list = None, fill
             c.pop("dateObtained", None)
 
     changes = []
+    raw_work = [j for j in (parsed.get("workExperience") or []) if isinstance(j, dict) and any(j.values())]
+    dropped = sum(1 for j in raw_work if not _valid_date(j.get("startDate")))
+    if dropped == 1:
+        changes.append("1 job had no start date, omitted from profile")
+    elif dropped > 1:
+        changes.append(f"{dropped} jobs had no start date, omitted from profile")
     for i, j in jobs:
         company = " ".join(str(j.get("companyName") or "").split())[:60]
         title = " ".join(str(j.get("jobTitle") or "").split())[:60]

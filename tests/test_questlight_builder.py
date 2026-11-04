@@ -78,6 +78,8 @@ check("a job without a valid start date is not sent, but does not block profile 
       questlight.review({**FRESHER, "workExperience": [{"jobTitle": "t", "companyName": "c", "startDate": "garbage"}]})["missing"] == [])
 check("...and 'go ahead' (fill) succeeds cleanly",
       questlight.review({**FRESHER, "workExperience": [{"jobTitle": "t", "companyName": "c", "startDate": "garbage"}]}, fill=True)["missing"] == [])
+check("...and the dropped job is reported in adjusted to notify the recruiter",
+      "1 job had no start date, omitted from profile" in questlight.review({**FRESHER, "workExperience": [{"jobTitle": "t", "companyName": "c", "startDate": "garbage"}]})["adjusted"])
 check("phone is only recommended", questlight.missing_recommended({"phoneNumber": ""}) == ["phoneNumber"]
       and questlight.missing_recommended({"phoneNumber": "+91 98765 43210"}) == [])
 
