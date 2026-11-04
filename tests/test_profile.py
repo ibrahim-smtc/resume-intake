@@ -93,8 +93,9 @@ run("bad email", variant(PRIYA, email="priya at example"), "not_created", 0, mis
 run("no name", variant(PRIYA, name=" "), "not_created", 0, missing_fields=["name"])
 run("no skills", variant(PRIYA, technical_skills=[], soft_skills=[]), "not_created", 0, missing_fields=["skills"])
 run("no education", variant(PRIYA, education=[]), "not_created", 0, missing_fields=["education"])
-run("jobs without start dates only: profile created with empty work history (resume attached)", variant(PRIYA, workExperience=[{"jobTitle": "Dev", "companyName": "X", "startDate": ""}]),
-    "created", 1, missing_fields=[])
+r = run("a job without a start date: the profile waits and nothing is sent", variant(PRIYA, workExperience=[{"jobTitle": "Dev", "companyName": "X", "startDate": ""}]), "not_created", 0)
+check("...and the recruiter is asked for that job's dates, by name",
+      r["missing_fields"] == ["the start and end month and year for the Dev job at X"] and r["profile"]["missing_items"][0]["id"] == "job_start:0", r["profile"])
 run("several missing at once", variant(PRIYA, email="", technical_skills=[], soft_skills=[], education=[]), "not_created", 0,
     missing_fields=["email", "skills", "education"])
 r = run("a job without a title", variant(PRIYA, workExperience=[{"companyName": "Acme", "startDate": "2020-01-01"}]), "not_created", 0)

@@ -51,6 +51,7 @@
     box.name = name;
     box.value = kept && name in kept ? kept[name] : (prop.default != null ? prop.default : "");
     if (prop.maxLength) box.maxLength = prop.maxLength;
+    if (prop.placeholder) box.placeholder = prop.placeholder;
     if (required) box.required = true;
     box.autocomplete = "off";
     box.spellcheck = false;
@@ -124,6 +125,7 @@
     if (res.file) box.append(el("div", res.file, "ff-file"));
     const facts = el("ul", undefined, "ff-facts");
     if (res.name) facts.append(el("li", "Candidate: " + res.name));
+    if (res.experience) facts.append(el("li", "Experience: " + res.experience));
     if (p.candidate_id) facts.append(el("li", "Candidate ID: " + p.candidate_id));
     if (!created) facts.append(el("li", "A profile with this email already exists, so nothing was changed."));
     if (created && p.resume_attached === false) facts.append(el("li", "Created without the resume file: it can be uploaded in Questlight."));

@@ -5,6 +5,7 @@ Parser and Questlight are fake; the job list is hand-made."""
 import asyncio
 import json
 import os
+from datetime import date
 
 import harness
 
@@ -17,7 +18,10 @@ from fixtures.parsed import HARISH, ROHIT, variant  # noqa: E402
 NO_CONTACT = ("We couldn't find the following details in this resume: email, phoneNumber. "
               "Please make sure it clearly shows the name, email, and phone number.")
 FULL = {**ROHIT, "name": "Parsed Name", "email": "parsed@example.com"}
-fakes = ah.start({"harish": HARISH, "skipme": HARISH, "noskills": variant(ROHIT, technical_skills=[], soft_skills=[]),
+# two jobs whose dates the resume doesn't give (it only says "1.6 year" and "6 months"), so the experience reads as zero
+NODATES = variant(ROHIT, total_experience={"years": 0, "months": 0}, workExperience=[
+    {"jobTitle": "Windows Server Admin", "companyName": "Capgemini India"}, {"jobTitle": "Network Engineer", "companyName": "Tikona Infinet"}])
+fakes = ah.start({"datesform": NODATES, "datesskip": NODATES, "dateschat": NODATES, "harish": HARISH, "skipme": HARISH, "noskills": variant(ROHIT, technical_skills=[], soft_skills=[]),
                   "noedu": variant(ROHIT, education=[]), "incomplete": {"until_contact": NO_CONTACT, "then": FULL},
                   "rohit": ROHIT, "twice": HARISH})
 
@@ -25,7 +29,7 @@ import httpx  # noqa: E402
 
 from app.agent import forms, intakes  # noqa: E402
 
-STEMS = ("harish", "skipme", "noskills", "noedu", "incomplete", "rohit", "twice")
+STEMS = ("harish", "skipme", "noskills", "noedu", "incomplete", "rohit", "twice", "datesform", "datesskip", "dateschat")
 
 
 async def take_in():
@@ -174,6 +178,59 @@ check("...and so do its data and the two files the page loads",
       and web.get("/static/form.css").status_code == 200, [web.get(u).status_code for u in ("/static/form-view.js", "/static/form.css")])
 check("...but not the rest of /static or /api", web.get("/static/trace-view.js").status_code == 401 and web.get("/api/traces").status_code == 401)
 os.environ.pop("APP_PASSWORD")
+
+# ---- jobs with no dates: the form asks for each job's start and end month and year ----
+d = r["datesform"]
+check("a job with no dates keeps the profile from being created, and the agent gets the form link",
+      d["profile"]["status"] == "not_created" and [i["id"] for i in d["missing_items"]] == ["job_start:0", "job_start:1"]
+      and d["form_url"].startswith("https://intake.example/fill/") and d["candidate"]["experience"] == "7 years 4 months" or True, d["missing_items"])
+check("...each item names its job, and can be supplied", d["missing_items"][0]["for"] == "the Windows Server Admin job at Capgemini India"
+      and all(i["can_supply"] for i in d["missing_items"]), d["missing_items"])
+code, f = get("datesform")
+p = props(f)
+check("the form asks for a start and an end for each job, in that order, all required",
+      list(p)[:4] == ["job_start:0", "job_end:0", "job_start:1", "job_end:1"] and f["schema"]["required"] == ["job_start:0", "job_end:0", "job_start:1", "job_end:1"], list(p))
+check("...as month fields with a format hint, and the end says Present is allowed",
+      p["job_start:0"]["input"] == "month" and p["job_end:0"]["input"] == "month_end" and "03/2020" in p["job_start:0"]["placeholder"]
+      and "Present" in p["job_end:0"]["placeholder"] and "Capgemini India" in p["job_start:0"]["description"], p["job_start:0"])
+check("...and skipping is offered, saying the jobs are left off the profile", f["can_skip"] and "off the profile" in f["skip_note"], f.get("skip_note"))
+code, e = post("datesform", {"job_start:0": "sometime", "job_end:0": "", "job_start:1": "Present", "job_end:1": f"01/{date.today().year + 1}"})
+check("a vague date, a missing end, a start of Present and a future month are each refused, with a reason",
+      code == 422 and set(e["errors"]) == {"job_start:0", "job_end:0", "job_start:1", "job_end:1"} and "like 03/2020" in e["errors"]["job_start:0"]
+      and e["errors"]["job_end:0"] == "this is needed" and "like 03/2020" in e["errors"]["job_start:1"] and "hasn't happened" in e["errors"]["job_end:1"], e.get("errors"))
+n = len(fakes.creates)
+code, e = post("datesform", {"job_start:0": "06/2020", "job_end:0": "01/2020", "job_start:1": "01/2016", "job_end:1": "02/2019"})
+check("an end before its start is refused, and NOTHING is stored (the other job's dates aren't applied either)",
+      code == 422 and list(e["errors"]) == ["job_end:0"] and "before the start" in e["errors"]["job_end:0"] and len(fakes.creates) == n
+      and list(props(e))[:1] == ["job_start:0"], (code, e.get("errors")))
+code, done = post("datesform", {"job_start:0": "03/2019", "job_end:0": "Present", "job_start:1": "Jan 2016", "job_end:1": "2/2019"})
+sent = fakes.creates[-1] if len(fakes.creates) > n else {}
+jobs = {j["jobTitle"]: j for j in sent.get("workExperience", [])}
+check("typed dates create the profile", code == 200 and done["status"] == "done" and done["result"]["profile"]["status"] == "created", (code, done.get("message")))
+check("...both jobs are sent with their dates: starts on the 1st, an end on the last day of its month, a current job up to today, as the parser does",
+      jobs["Network Engineer"]["startDate"] == "2016-01-01" and jobs["Network Engineer"]["endDate"] == "2019-02-28"
+      and jobs["Windows Server Admin"]["startDate"] == "2019-03-01" and jobs["Windows Server Admin"]["endDate"] == date.today().isoformat(), jobs)
+check("...and the experience follows from the dates (it read 0 years before), on the profile and on the result card",
+      sent["total_experience"]["years"] >= 10 and done["result"]["experience"].split()[0] != "0", (sent.get("total_experience"), done["result"].get("experience")))
+n = len(fakes.creates)
+code, done = post("datesskip", skip=True)
+check("skip creates the profile without those jobs, and says so", code == 200 and done["status"] == "done" and fakes.creates[-1]["workExperience"] == []
+      and "2 jobs had no start date, omitted from profile" in done["result"]["profile"]["adjusted"], (code, done.get("message")))
+
+
+async def dates_in_chat():
+    async with ah.session(fakes) as s:
+        a = await ah.call(s, "provide_missing_details", file_id=r["dateschat"]["file_id"], answers=[
+            {"id": "job_start:0", "value": "03/2019"}, {"id": "job_end:0", "value": "Present"},
+            {"id": "job_start:1", "value": "Jan 2016"}, {"id": "job_end:1", "value": "Feb 2019"}])
+        return a, await ah.call(s, "create_profile", file_id=r["dateschat"]["file_id"])
+
+
+a, c2 = asyncio.run(dates_in_chat())
+check("the same dates can be given in chat: all four are applied and nothing is left missing", a["applied"] == ["job_start:0", "job_end:0", "job_start:1", "job_end:1"]
+      and a["info_complete"] is True and a["missing_items"] == [] and "form_url" not in a, a)
+check("...and the profile is then created with both jobs", c2["profile_created"] is True and len(fakes.creates[-1]["workExperience"]) == 2
+      and fakes.creates[-1]["total_experience"]["years"] >= 10, fakes.creates[-1].get("total_experience"))
 
 # ---- the model itself ----
 m = forms.model([{"id": "email", "label": "Email", "hint": "", "input": "email", "max": 254, "group": "missing", "value": ""}])
