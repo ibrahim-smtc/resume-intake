@@ -101,8 +101,9 @@ parser and job list and sends profiles that Questlight must reject, so nothing i
 ## Deploying to Vercel
 
 The app is a FastAPI `app` in `app/main.py`, which Vercel detects on its own ([pyproject.toml](pyproject.toml) names it
-explicitly, [vercel.json](vercel.json) sets the function's maximum duration to 300 s, [.vercelignore](.vercelignore) keeps tests,
-docs and secrets out of the upload).
+explicitly, [vercel.json](vercel.json) sets the function's maximum duration to 300 s and runs it in Mumbai (`bom1`): Perfox, its file
+storage and Questlight are in India, and the default US region added seconds to every call, which matters because Perfox gives a
+tool call 30 s, [.vercelignore](.vercelignore) keeps tests, docs and secrets out of the upload).
 
 1. Put the project in a Git repository and import it in Vercel (or run `vercel` from this folder). No build command is needed.
    Check that `.env` is **not** committed (it is in `.gitignore`).
