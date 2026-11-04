@@ -123,6 +123,11 @@ check("...and not the full parsed JSON", "workExperience" not in json.dumps(r) a
 check("info is complete, and the top roles carry scores", r["info_complete"] is True and r["missing_required"] == [] and 1 <= len(r["top_roles"]) <= 3
       and all("score" in m for m in r["top_roles"]), r["top_roles"])
 check("a created profile keeps a handle, with nothing left to do", r.get("file_id") and "next" not in r)
+t = r["timings_s"]
+check("the result says where the time went: the run, Perfox, Questlight and this app, in seconds",
+      set(t) == {"total", "perfox", "questlight", "app"} and all(isinstance(v, float) for v in t.values()), t)
+check("...and the hops don't add up to more than the run (the early job-list download is not counted twice)",
+      t["perfox"] + t["questlight"] + t["app"] <= t["total"] + 0.2 and min(t.values()) >= 0, t)  # the fakes answer at once, so 0.0 is fine
 check("the invoice (a name without an extension) is recognised as a PDF and judged junk, with no handle",
       o["junk"]["decision"] == "junk" and o["junk"]["file"] == "invoice.pdf" and o["junk"]["profile_created"] is False and "file_id" not in o["junk"], o["junk"])
 check("a bad link gives decision 'error' with the reason", o["bad_url"]["decision"] == "error" and "https" in o["bad_url"]["error"])
