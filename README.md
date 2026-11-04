@@ -48,10 +48,11 @@ app/
     mcp_app.py         the MCP server and its token-checked /mcp endpoint
     tools.py           the 9 tools the agent can call
     intakes.py         the agent's short-term memory of the files it has taken in
+    forms.py           the fill-in form for what a resume lacks: a Pydantic model built per file, at /fill/<token>
     chat_bridge.py     the page's text box -> the agent's webhook
     formatting.py, downloads.py, tool_guide.py
   observability/     audit.py (the audit log), tracing.py (per-step timings and tokens)
-  static/            the pages: index.html (chat), classic.html, log.html, trace.html
+  static/            the pages: index.html (chat), classic.html, log.html, trace.html, fill.html (the fill-in form)
 tests/               offline test suites + fixtures (python tests/run_all.py)
 docs/                perfox-agent-setup.md, architecture diagram
 run.py               run it locally

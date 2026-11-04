@@ -22,7 +22,7 @@ import asyncio
 import contextlib
 
 from app import job_pipeline, pipeline, settings
-from app.agent import chat_bridge, downloads, formatting, intakes
+from app.agent import chat_bridge, downloads, formatting, forms, intakes
 from app.agent.mcp_app import mcp
 from app.intake import candidates, corrections, jobs, matching, questlight
 from app.observability import audit, tracing
@@ -46,6 +46,15 @@ def _upload_token(file_url: str):
     return chat_bridge.token_of(file_url) if chat_bridge.is_link(file_url) else None
 
 
+def _offer_form(out: dict, intake) -> dict:
+    """Adds form_url (the private link to a fill-in form, see forms.py) when something is still missing for this resume."""
+    if out.get("missing_items") and (out.get("profile") or {}).get("status") not in ("created", "duplicate"):
+        out["form_url"] = forms.link(intake)
+        offer = "give the recruiter form_url (a form for what is missing: submitting it creates the profile and matches roles)"
+        out["next"] = f"{offer}; or {out['next']}" if out.get("next") else offer
+    return out
+
+
 @mcp.tool()
 async def process_resume(file_url: str, file_name: str = "") -> dict:
     """Process ONE candidate resume the recruiter has shared (PDF or DOCX). USE THIS BY DEFAULT for an attached file.
@@ -61,10 +70,11 @@ async def process_resume(file_url: str, file_name: str = "") -> dict:
     match_roles) when the recruiter asks for one specific step.
 
     If the resume lacks something Questlight requires (profile.status "not_created" with missing_items, e.g. "a job
-    title for the job at Acme"), no profile is created yet and the result has a file_id: ASK the recruiter for each
-    missing item (one answer that clearly covers several items may be reused), then call provide_missing_details with
-    the answers, then create_profile(file_id). If the recruiter says to go ahead without it, call
-    create_profile(file_id, fill_missing=true).
+    title for the job at Acme"), no profile is created yet and the result has a file_id and form_url: a private link to
+    a form where the recruiter fills in what is missing (and corrects what was read). Submitting it creates the profile
+    and matches roles by itself, so offer the link rather than asking question by question. A recruiter who answers in
+    chat instead: call provide_missing_details with the answers, then create_profile(file_id). If the recruiter says to
+    go ahead without it, call create_profile(file_id, fill_missing=true).
 
     Result fields to report to the recruiter:
     - decision: "accepted" (a resume), "junk" (not a resume, discarded), "needs_review" (unclear, a person must look),
@@ -126,6 +136,7 @@ async def _take_resume(name: str, data: bytes, token) -> dict:
         hint = formatting.next_hint((out["profile"] or {}).get("status"))
         if hint:
             out["next"] = hint
+        _offer_form(out, intake)
     return out
 
 
@@ -150,7 +161,7 @@ def _where_it_stands(intake: intakes.Intake) -> dict:
         if hint:
             out["next"] = hint
         return out
-    return formatting.status_of(intake)
+    return _offer_form(formatting.status_of(intake), intake)
 
 
 def _resume_intake(ref: str):
@@ -209,18 +220,18 @@ async def provide_missing_details(file_id: str, answers: list[dict[str, str]]) -
                 intake.parsed, intake.incomplete = p["parsed"], None
         else:
             left = [i for i in questlight.unreadable_items(intake.incomplete) if not intake.contact.get(asked.get(i["id"], i["id"]))]
-            return {"ok": True, "file_id": intake.id, "applied": applied, "rejected": rejected, "info_complete": False,
-                    "missing_required": [formatting.UNREADABLE], "missing_items": left,
-                    "next": "ask the recruiter for only the items in missing_items; once all are given the resume is read"}
+            return _offer_form({"ok": True, "file_id": intake.id, "applied": applied, "rejected": rejected, "info_complete": False,
+                                "missing_required": [formatting.UNREADABLE], "missing_items": left,
+                                "next": "ask the recruiter for only the items in missing_items; once all are given the resume is read"}, intake)
     if intake.parsed is None:  # reading it again failed (the reason is in `error`): the same call retries it
         return {"ok": False, "file_id": intake.id, "applied": applied, "rejected": rejected, "error": read_error,
                 "next": "tell the recruiter what went wrong; calling provide_missing_details again (with answers=[]) tries once more"}
     checked = questlight.review(intake.parsed)
-    return {"ok": True, "file_id": intake.id, "applied": applied, "rejected": rejected,
-            **({"candidate": formatting.candidate(pipeline.redact(intake.parsed))} if unread else {}),
-            "info_complete": not checked["missing"], "missing_required": checked["missing"], "missing_items": checked["items"],
-            "next": "create_profile(file_id)" if not checked["missing"] else
-                    "ask the recruiter for what is still missing, then call this again"}
+    return _offer_form({"ok": True, "file_id": intake.id, "applied": applied, "rejected": rejected,
+                        **({"candidate": formatting.candidate(pipeline.redact(intake.parsed))} if unread else {}),
+                        "info_complete": not checked["missing"], "missing_required": checked["missing"], "missing_items": checked["items"],
+                        "next": "create_profile(file_id)" if not checked["missing"] else
+                                "ask the recruiter for what is still missing, then call this again"}, intake)
 
 
 @mcp.tool()
@@ -253,10 +264,10 @@ async def create_profile(file_id: str, fill_missing: bool = False) -> dict:
             missing, recommended, profile = await pipeline.load_into_questlight(
                 intake.run, intake.data, intake.ext, intake.parsed, fill=fill_missing)
             intake.profile = profile
-    return {"ok": True, "file_id": intake.id, "profile_created": profile["status"] == "created",
-            "profile": formatting.profile_view(profile),
-            "info_complete": not missing, "missing_required": missing, "missing_items": profile.get("missing_items") or [],
-            "missing_recommended": recommended, "trace_id": trace.id}
+    return _offer_form({"ok": True, "file_id": intake.id, "profile_created": profile["status"] == "created",
+                        "profile": formatting.profile_view(profile),
+                        "info_complete": not missing, "missing_required": missing, "missing_items": profile.get("missing_items") or [],
+                        "missing_recommended": recommended, "trace_id": trace.id}, intake)
 
 
 @mcp.tool()

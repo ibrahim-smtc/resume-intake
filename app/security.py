@@ -11,6 +11,9 @@ audit log and traces) has no login of its own, so:
 - APP_PASSWORD set: every request except /mcp and /parsing/* needs HTTP Basic auth with that password (any user name). The browser asks once.
 - Locally, a request that arrives through a Cloudflare tunnel (Cloudflare adds Cf-Ray and Cf-Connecting-Ip) may only reach /mcp
   when there is no password, so a development tunnel never exposes the pages.
+- A fill-in form for missing resume details (/fill/<token>, /api/form/<token>, app/agent/forms.py) is opened from a link on
+  WhatsApp, where nobody has the app's password: the long random token in its address is its key, and it lasts 30 minutes.
+  Those paths, and the two files the form's page loads, skip the password.
 """
 import base64
 import hmac
@@ -20,6 +23,9 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse, Response
 
 from app import settings
+
+FORM_PATHS = ("/fill/", "/api/form/")
+FORM_FILES = {"/static/form-view.js", "/static/form.css"}
 
 
 def _basic_password(header: str) -> str:
@@ -40,7 +46,8 @@ class AccessGuard:
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
-        if scope["type"] != "http" or path.rstrip("/") == "/mcp" or path == "/parsing" or path.startswith("/parsing/"):
+        if (scope["type"] != "http" or path.rstrip("/") == "/mcp" or path == "/parsing" or path.startswith("/parsing/")
+                or path.startswith(FORM_PATHS) or path in FORM_FILES):
             return await self.app(scope, receive, send)
         headers = Headers(scope=scope)
         password = os.getenv("APP_PASSWORD", "")

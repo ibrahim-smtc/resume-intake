@@ -1,21 +1,21 @@
 """The web app: the pages, the JSON APIs they use, and the Perfox agent's /mcp endpoint.
 
 Pages (app/static): /  the chat-style upload page,  /classic  the original one-button page,  /log  the audit log,
-/trace  per-step timings and tokens.
+/trace  per-step timings and tokens,  /fill/{token}  a resume's fill-in form for missing details (app/agent/forms.py).
 APIs: POST /api/process (upload a resume straight into the pipeline), POST /api/chat (the page's text box, sent to the
-Perfox agent), GET /api/config, /api/tools, /api/log, /api/traces, /api/trace/{id}.
+Perfox agent), GET /api/config, /api/tools, /api/log, /api/traces, /api/trace/{id}, GET and POST /api/form/{token}.
 Agent: POST /mcp, the MCP tools in app/agent/tools.py.
 
 Run locally with `python run.py`. On Vercel this module is the entrypoint (the `app` below).
 """
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import settings, pipeline
-from app.agent import chat_bridge, mcp_app, tool_guide
+from app.agent import chat_bridge, forms, intakes, mcp_app, tool_guide
 from app.observability import audit, tracing
 from app.parsing.router import router as parsing_router
 from app.security import AccessGuard
@@ -60,6 +60,13 @@ def trace_page():
     return _page("trace.html")
 
 
+@app.get("/fill/{token}", include_in_schema=False)
+def fill_page(token: str):
+    """A resume's fill-in form as a page of its own, for a recruiter on WhatsApp (app/agent/forms.py). The page reads the
+    token from its address; the token is the form's only key."""
+    return FileResponse(settings.STATIC_DIR / "fill.html", headers=forms.PRIVATE)
+
+
 # ---------- APIs ----------
 
 @app.get("/api/config")
@@ -89,6 +96,34 @@ async def chat(message: str = Form(""), session_id: str = Form(""), file: Upload
     if file is not None and file.filename:
         upload = (Path(file.filename).name, await file.read())
     return await chat_bridge.send(session_id, message, upload)
+
+
+def _form_intake(token: str):
+    intake = intakes.find_by_form(token)
+    return intake if intake and intake.kind == "resume" else None
+
+
+@app.get("/api/form/{token}")
+def form_view(token: str):
+    """What a fill-in form shows: its fields (a JSON schema), or the result once the profile exists."""
+    intake = _form_intake(token)
+    if not intake:
+        return JSONResponse({"status": "expired", "message": forms.GONE}, 410, headers=forms.PRIVATE)
+    return JSONResponse(forms.view(intake), headers=forms.PRIVATE)
+
+
+@app.post("/api/form/{token}")
+async def form_submit(token: str, request: Request):
+    """A submitted fill-in form: {"values": {id: text}, "skip": false}. Checked, stored, and the profile created."""
+    intake = _form_intake(token)
+    if not intake:
+        return JSONResponse({"status": "expired", "message": forms.GONE}, 410, headers=forms.PRIVATE)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    code, out = await forms.submit(intake, body if isinstance(body, dict) else {})
+    return JSONResponse(out, code, headers=forms.PRIVATE)
 
 
 @app.get("/api/log")
