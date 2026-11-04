@@ -27,7 +27,6 @@ check("...and its dependencies (Vercel installs from here)", len(project.get("de
 check("requirements.txt lists exactly the same packages and version ranges",
       sorted(project["dependencies"]) == sorted(requirement_lines(ROOT / "requirements.txt")),
       (sorted(project["dependencies"]), sorted(requirement_lines(ROOT / "requirements.txt"))))
-check("requirements-dev.txt builds on requirements.txt", "-r requirements.txt" in (ROOT / "requirements-dev.txt").read_text(encoding="utf-8"))
 check("the Python version in .python-version satisfies requires-python", (ROOT / ".python-version").read_text().strip().startswith("3.12") and project["requires-python"] == ">=3.12")
 check("the app is an application, not a library (uv only installs its dependencies)", pyproject["tool"]["uv"]["package"] is False)
 

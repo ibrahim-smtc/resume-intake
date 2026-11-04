@@ -18,3 +18,5 @@ tools/
 # docs/notes.md has internal API findings and test-data details.
 sources/
 docs/notes.md
+docs/TOKEN_USAGE_PLAN.md
+docs/Questlight_Resume_Agent_Technical_Implementation.*

@@ -1,7 +1,7 @@
 """Builds the fake files in files/ for the junk-rules test (tests/test_junk.py). Everything is invented. Writes cases.json
 with the expected result for each. Only needed to change the cases: the files are checked in.
 
-    pip install -r requirements-dev.txt
+    pip install python-docx reportlab pillow
     python tests/fixtures/junk/generate.py
 """
 import json

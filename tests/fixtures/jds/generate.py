@@ -2,7 +2,7 @@
 cases.json with the expected classification of each. Every company, person and number here is made up.
 Only needed to change the cases: the files are checked in.
 
-    pip install -r requirements-dev.txt
+    pip install python-docx reportlab pillow
     python tests/fixtures/jds/generate.py
 """
 import json
