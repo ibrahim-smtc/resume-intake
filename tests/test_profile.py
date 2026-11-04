@@ -22,7 +22,11 @@ async def create(request: Request):
         return JSONResponse({"statusCode": 401, "message": "Unauthorized"}, 401)
     form = await request.form()
     d = json.loads(form["applicantData"])
-    calls.append({"data": d, "has_resume": "resume" in form, "ctype": request.headers["content-type"][:19]})
+    up = form.get("resume")
+    fname = getattr(up, "filename", None)
+    calls.append({"data": d, "has_resume": "resume" in form, "ctype": request.headers["content-type"][:19], "filename": fname})
+    if fname and (".." in fname or "/" in fname or "\\" in fname):   # Questlight's own rule
+        return JSONResponse({"statusCode": 400, "message": "The file name must not contain a path."}, 400)
     for f in ("name", "email", "skills", "workExperience", "education"):
         if f not in d or d[f] in ("", None):
             return JSONResponse({"statusCode": 400, "message": f"{f} should not be empty"}, 400)
@@ -89,8 +93,8 @@ run("bad email", variant(PRIYA, email="priya at example"), "not_created", 0, mis
 run("no name", variant(PRIYA, name=" "), "not_created", 0, missing_fields=["name"])
 run("no skills", variant(PRIYA, technical_skills=[], soft_skills=[]), "not_created", 0, missing_fields=["skills"])
 run("no education", variant(PRIYA, education=[]), "not_created", 0, missing_fields=["education"])
-run("jobs without start dates only (listed, but none can be sent)", variant(PRIYA, workExperience=[{"jobTitle": "Dev", "companyName": "X", "startDate": ""}]),
-    "not_created", 0, missing_fields=["workExperience"])
+run("jobs without start dates only: profile created with empty work history (resume attached)", variant(PRIYA, workExperience=[{"jobTitle": "Dev", "companyName": "X", "startDate": ""}]),
+    "created", 1, missing_fields=[])
 run("several missing at once", variant(PRIYA, email="", technical_skills=[], soft_skills=[], education=[]), "not_created", 0,
     missing_fields=["email", "skills", "education"])
 r = run("a job without a title", variant(PRIYA, workExperience=[{"companyName": "Acme", "startDate": "2020-01-01"}]), "not_created", 0)
@@ -102,6 +106,10 @@ run("no phone (only recommended)", variant(PRIYA, phoneNumber=""), "created", 1,
 run("a fresher: no work experience at all", variant(PRIYA, workExperience=[], total_experience={"years": 0, "months": 0}), "created", 1, missing_fields=[])
 check("...the profile goes to Questlight with an empty work history array, not without the key",
       calls[-1]["data"]["workExperience"] == [] and calls[-1]["data"]["total_experience"] == {"years": 0, "months": 0}, calls[-1]["data"])
+current["parsed"] = PRIYA
+r = client.post("/api/process", files={"file": ("SIMRAN MHATRE CV........ (1).pdf", pdf)}).json()
+check("a file name with a run of dots (\"CV........ (1).pdf\") still creates the profile: Questlight refuses names that look like paths",
+      r["profile"]["status"] == "created" and calls[-1]["filename"] == "SIMRAN MHATRE CV (1).pdf", (r["profile"], calls[-1]["filename"]))
 run("duplicate email", variant(PRIYA, email="dup@example.com"), "duplicate", 1)
 
 # ---- settings and failures ----
