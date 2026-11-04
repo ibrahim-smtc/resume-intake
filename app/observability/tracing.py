@@ -132,9 +132,14 @@ class Trace:
 
     def save(self) -> None:
         """Writes the spans to the audit database. Never raises: a broken trace store must not fail the upload, but it
-        says so loudly."""
+        says so loudly. Also prints one [timing] line, so the run's timings can be read in the host's logs (on Vercel the
+        database itself is lost when an instance restarts)."""
         if not self.spans:
             return
+        try:
+            print(timing_line(self))
+        except Exception:  # a timing line must never fail the run either
+            pass
         try:
             conn = _connect()
             with conn:
@@ -148,6 +153,46 @@ class Trace:
             conn.close()
         except (sqlite3.Error, OSError) as exc:
             print(f"[trace] WARNING: couldn't save the trace ({exc})")
+
+
+# ---------- where the time went ----------
+
+# For "which hop is slow?": reading the document is Perfox, this app's own checks cost almost nothing, and every other step
+# is a call to Questlight.
+PERFOX_STEPS = {"parse resume", "parse JD"}
+APP_STEPS = {"intake checks", "junk check", "what is it"}
+PARALLEL_STEP = "fetch open jobs"  # started early, runs while the document is being read (see pipeline.run_pipeline)
+
+
+def _direct_steps(spans: list) -> list:
+    """The steps directly under the root span, in order. Steps inside them are already part of their time."""
+    root = spans[0] if spans else None
+    return [s for s in spans[1:] if root and s["parent_id"] == root["id"] and s["duration_ms"] is not None]
+
+
+def stage_seconds(summary):
+    """Where one run's time went, from Trace.summary(): the whole run and the part spent in Perfox, in Questlight and in this
+    app's own steps, in seconds. The early open-jobs download is left out because it overlaps the Perfox step, so counting
+    it would count that time twice. None when there is no finished trace."""
+    spans = (summary or {}).get("spans") or []
+    if not spans or spans[0]["duration_ms"] is None:
+        return None
+    hops = {"perfox": 0.0, "questlight": 0.0, "app": 0.0}
+    for s in _direct_steps(spans):
+        if s["name"] == PARALLEL_STEP:
+            continue
+        hops["perfox" if s["name"] in PERFOX_STEPS else "app" if s["name"] in APP_STEPS else "questlight"] += s["duration_ms"] / 1000
+    return {"total": round(spans[0]["duration_ms"] / 1000, 1), **{hop: round(sec, 1) for hop, sec in hops.items()}}
+
+
+def timing_line(trace) -> str:
+    """One line for the logs: the run, its channel, the seconds in each hop and in each step. Step names and seconds only."""
+    spans = trace.summary()["spans"]
+    hops = stage_seconds({"spans": spans}) or {}
+    steps = [f"{s['name']} {s['duration_ms'] / 1000:.1f}s" + (" (parallel)" if s["name"] == PARALLEL_STEP else "")
+             for s in _direct_steps(spans)]
+    return (f"[timing] {trace.id} {spans[0]['name']} channel={spans[0]['details'].get('channel', '?')} total={hops.get('total')}s "
+            f"perfox={hops.get('perfox')}s questlight={hops.get('questlight')}s app={hops.get('app')}s | " + " | ".join(steps))
 
 
 # ---------- helpers for the pipeline modules ----------

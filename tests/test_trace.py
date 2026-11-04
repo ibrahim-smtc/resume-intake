@@ -174,6 +174,24 @@ check("per-step stats include every step", {"score jobs", "fetch open jobs", "ju
 check("parse tokens are summed over the runs that reported them (3 of them)", pr["input_tokens"] == 370 * 3, pr)
 check("the stats response carries no LangSmith flag any more", "langsmith" not in stats)
 
+# 8b. the [timing] log line: where the time went, readable in the host's logs, with no candidate data in it
+import contextlib  # noqa: E402
+import io  # noqa: E402
+
+from app.observability import tracing  # noqa: E402
+
+printed = io.StringIO()
+with contextlib.redirect_stdout(printed):
+    upload("r01_standard.pdf")
+line = next((x for x in printed.getvalue().splitlines() if x.startswith("[timing]")), "")
+check("a run prints one [timing] line with its channel, the seconds in each hop and each step",
+      all(x in line for x in ("channel=manual upload", "perfox=", "questlight=", "app=", "parse resume", "load into Questlight")), line)
+check("...and nothing from the candidate", not any(x in line for x in ("priya", "Priya", "98765", "secret-project-x")), line)
+hops = tracing.stage_seconds(r["trace"])
+check("stage_seconds: Perfox's step (0.3 s in this test) is counted as Perfox, and the hops fit inside the run",
+      hops is not None and hops["perfox"] >= 0.3 and hops["questlight"] > 0 and hops["perfox"] + hops["questlight"] + hops["app"] <= hops["total"] + 0.2, hops)
+check("stage_seconds has nothing to say without a trace", tracing.stage_seconds(None) is None and tracing.stage_seconds({"spans": []}) is None)
+
 # 9. a broken trace store must not break the upload
 os.environ["AUDIT_DB"] = str(tmp)  # a folder, not a file
 rb = upload("r01_standard.pdf")

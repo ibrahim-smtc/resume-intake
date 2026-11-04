@@ -2,6 +2,7 @@
 from app import pipeline, settings
 from app.agent.intakes import Intake
 from app.intake import questlight
+from app.observability import tracing
 
 TOP_SKILLS = 20  # skills listed back to the agent; the profile in Questlight gets all of them
 UNREADABLE = "name, email or phone (the parser couldn't read them)"
@@ -70,6 +71,7 @@ def for_agent(result: dict) -> dict:
         "note": result.get("warning"),
         "roles_status": roles.get("status"), "roles_message": roles.get("message"), "top_roles": top_roles(roles),
         "screening": screening(roles), "trace_id": (result.get("trace") or {}).get("trace_id"),
+        "timings_s": tracing.stage_seconds(result.get("trace")),
     }
 
 
@@ -115,7 +117,8 @@ def job_for_agent(result: dict) -> dict:
                 "reason": result.get("reason"), "job_created": False}
     job = result.get("job") or {}
     return {"ok": True, "kind": "job_description", "file": result.get("file"), "decision": "job_description",
-            **job_view(job), "trace_id": (result.get("trace") or {}).get("trace_id")}
+            **job_view(job), "trace_id": (result.get("trace") or {}).get("trace_id"),
+            "timings_s": tracing.stage_seconds(result.get("trace"))}
 
 
 def job_view(job: dict) -> dict:
