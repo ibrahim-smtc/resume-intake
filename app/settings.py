@@ -40,6 +40,13 @@ MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB") or (4 if ON_VERCEL else 5))
 MAX_UPLOAD_BYTES = int(MAX_UPLOAD_MB * 1024 * 1024)
 MAX_UPLOAD_LABEL = f"{MAX_UPLOAD_MB:g} MB"
 
+# The address people open this app at, for the links it hands out (the fill-in form for missing details, which a WhatsApp
+# recruiter opens on their phone). On Vercel the project's production address is used (VERCEL_PROJECT_PRODUCTION_URL, which
+# Vercel sets itself; the per-deployment addresses ask for a Vercel login). Empty = links relative to this server, which is
+# enough for the chat page, since it opens the form itself.
+_VERCEL_HOST = os.getenv("VERCEL_PROJECT_PRODUCTION_URL", "").strip()
+PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL", "").strip() or (f"https://{_VERCEL_HOST}" if _VERCEL_HOST else "")).rstrip("/")
+
 # Where the audit log and traces are kept (SQLite). On Vercel only /tmp is writable, and it does not survive between
 # instances: see README.md, "Deploying to Vercel".
 DEFAULT_AUDIT_DB = Path("/tmp/audit.db") if ON_VERCEL else ROOT / "data" / "audit.db"

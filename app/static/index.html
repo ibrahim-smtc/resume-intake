@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&display=swap" rel="stylesheet">
   <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap" rel="stylesheet">   <!-- Satoshi: the body font -->
+  <link rel="stylesheet" href="/static/form.css">   <!-- the fill-in form for missing resume details (form-view.js) -->
   <script>try { if (localStorage.getItem("theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}</script>
   <style>
     * { box-sizing: border-box; }
@@ -300,6 +301,7 @@
   </div>
 
   <script src="/static/trace-view.js"></script>
+  <script src="/static/form-view.js"></script>
   <script>
     const frame = document.getElementById("frame");
     const thread = document.getElementById("thread");
@@ -457,7 +459,14 @@
       } catch (err) {
         r = { ok: false, error: "couldn't reach the server (" + err.message + ")" };
       }
-      bubble.replaceChildren(r.ok ? markdown(r.reply) : el("div", r.error || "something went wrong", "err"));
+      // A reply with a fill-in form's link (something is missing from the resume): the form is drawn under it, not the link.
+      const formToken = r.ok && window.FillForm ? FillForm.tokenIn(r.reply) : null;
+      bubble.replaceChildren(r.ok ? markdown(formToken ? FillForm.strip(r.reply) : r.reply) : el("div", r.error || "something went wrong", "err"));
+      if (formToken) {
+        const box = el("div");
+        bubble.appendChild(box);
+        FillForm.open(box, formToken);
+      }
       setBusy(false);
       bubble.parentElement.scrollIntoView({ block: "start" });
     }

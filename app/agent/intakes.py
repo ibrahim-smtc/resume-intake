@@ -9,6 +9,7 @@ Memory is per process: a file is kept 30 minutes and at most 20 are held (the ol
 several instances (Vercel), a later call may land on another one; see README.md, "Deploying to Vercel".
 """
 import hashlib
+import secrets
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -21,6 +22,7 @@ MAX_FILES = 20
 
 _intakes: "OrderedDict[str, Intake]" = OrderedDict()
 _by_upload: dict = {}  # upload token (from the intake-file link) -> intake id
+_by_form: dict = {}    # fill-in form token (the private /fill/<token> link) -> intake id
 
 
 class Intake:
@@ -37,6 +39,7 @@ class Intake:
         self.job: dict | None = None
         self.parse_done = False
         self.upload = None  # the token of the intake-file link this file came in with (chat uploads), if any
+        self.form_token = None  # the token of this file's fill-in form link, once one was handed out (app/agent/forms.py)
 
 
 def remember(intake: Intake) -> None:
@@ -50,6 +53,23 @@ def remember(intake: Intake) -> None:
         _by_upload[intake.upload] = intake.id
     for token in [t for t, i in _by_upload.items() if i not in _intakes]:  # forget links to files that are gone
         del _by_upload[token]
+    for token in [t for t, i in _by_form.items() if i not in _intakes]:    # and the forms of files that are gone
+        del _by_form[token]
+
+
+def form_token(intake: Intake) -> str:
+    """The private token of this file's fill-in form, made the first time it is asked for. It is the only key to the form
+    (the link opens without the app's password), so it is long and random, and it dies with the file (30 minutes)."""
+    if not intake.form_token:
+        intake.form_token = secrets.token_urlsafe(24)
+        _by_form[intake.form_token] = intake.id
+    return intake.form_token
+
+
+def find_by_form(token):
+    """The live intake behind a fill-in form token, else None (unknown, or the file has expired)."""
+    intake = _intakes.get(_by_form.get(str(token or "").strip(), ""))
+    return intake if intake and time.monotonic() - intake.born <= TTL_S else None
 
 
 def find(ref):
