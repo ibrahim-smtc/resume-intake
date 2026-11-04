@@ -163,7 +163,9 @@ check("parallel uploads: each trace has only its own steps",
 
 # 7. no candidate data in the trace store
 dump = "\n".join(sqlite3.connect(os.environ["AUDIT_DB"]).iterdump())
-leaks = [x for x in ("priya.secret", "98765", "secret-project-x", "Anna University", "Priya") if x in dump]
+# The phone is searched for whole ("98765 43210"), not by its first five digits: the dump holds raw timing floats, and a run of random
+# digits like 312.46598765432 sometimes contains "98765" by chance.
+leaks = [x for x in ("priya.secret", "98765 43210", "9876543210", "secret-project-x", "Anna University", "Priya") if x in dump]
 check(f"no candidate data stored in traces (found: {leaks})", not leaks)
 
 # 8. per-step statistics
@@ -186,7 +188,7 @@ with contextlib.redirect_stdout(printed):
 line = next((x for x in printed.getvalue().splitlines() if x.startswith("[timing]")), "")
 check("a run prints one [timing] line with its channel, the seconds in each hop and each step",
       all(x in line for x in ("channel=manual upload", "perfox=", "questlight=", "app=", "parse resume", "load into Questlight")), line)
-check("...and nothing from the candidate", not any(x in line for x in ("priya", "Priya", "98765", "secret-project-x")), line)
+check("...and nothing from the candidate", not any(x in line for x in ("priya", "Priya", "98765 43210", "secret-project-x")), line)
 hops = tracing.stage_seconds(r["trace"])
 check("stage_seconds: Perfox's step (0.3 s in this test) is counted as Perfox, and the hops fit inside the run",
       hops is not None and hops["perfox"] >= 0.3 and hops["questlight"] > 0 and hops["perfox"] + hops["questlight"] + hops["app"] <= hops["total"] + 0.2, hops)

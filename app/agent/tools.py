@@ -20,12 +20,14 @@ Perfox. Add every new tool to tool_guide.py too.
 """
 import asyncio
 import contextlib
+from datetime import date
 
 from app import job_pipeline, pipeline, settings
 from app.agent import chat_bridge, downloads, formatting, forms, intakes
 from app.agent.mcp_app import mcp
 from app.intake import candidates, corrections, jobs, matching, questlight
 from app.observability import audit, tracing
+from app.parsing.resume.fix_normlization import fix_dates_and_experience
 
 CHANNEL = "perfox agent"  # the audit log's channel column for files that came in through the agent
 
@@ -180,8 +182,9 @@ async def provide_missing_details(file_id: str, answers: list[dict[str, str]]) -
     file_id comes from the process_resume result; if you no longer have it, pass the attachment's
     file_url instead. answers is a list of {"id": ..., "value": ...}, using the ids from
     missing_items, for example {"id": "job_title:1", "value": "Data Engineer"}. The ids are job_title:N, job_company:N,
-    degree:N, institution:N (N = the entry's number as given in missing_items), and name, email, phone, address or
-    skills (a comma-separated list). Use ONLY ids from missing_items and only values the recruiter actually said:
+    degree:N, institution:N, job_start:N and job_end:N (N = the entry's number as given in missing_items; a job with no
+    dates is asked for as job_start:N, and its end goes in job_end:N: both as month and year, like 03/2020, and the end
+    may be "Present"), and name, email, phone, address or skills (a comma-separated list). Use ONLY ids from missing_items and only values the recruiter actually said:
     never guess a value. Returns what is still missing.
 
     When process_resume says the parser could not read the candidate's email or phone (missing_items has
@@ -205,6 +208,8 @@ async def provide_missing_details(file_id: str, answers: list[dict[str, str]]) -
         problem = ("only the details in missing_items can be given until the resume has been read"
                    if unread and key not in ("name", "email", "phone") else corrections.apply_answer(parsed, key, value))
         (rejected.append(f"{key or '?'}: {problem}") if problem else applied.append(key))
+    if not unread and any(k.partition(":")[0] in ("job_start", "job_end") for k in applied):
+        fix_dates_and_experience(parsed, date.today())  # the job lengths and the total experience follow from the dates just given
     if applied:  # ids only (like "job_title:1"), never the values: the audit log holds no candidate details
         intake.run.log("correction", "applied", "the recruiter supplied missing details", fields=applied)
     read_error = None

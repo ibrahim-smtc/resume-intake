@@ -67,6 +67,15 @@ def _fit(value, label: str, notes: list) -> str:
     return text
 
 
+def _job_ref(job: dict, index: int) -> str:
+    """How a gap names a job, so the recruiter knows which one is meant: "the Network Engineer job at Tikona"."""
+    title = " ".join(str(job.get("jobTitle") or "").split())[:60]
+    company = " ".join(str(job.get("companyName") or "").split())[:60]
+    if title and company:
+        return f"the {title} job at {company}"
+    return f"the job at {company}" if company else f"the {title} job" if title else f"job {index + 1} on the resume"
+
+
 def _need(value, label: str, kind: str, index: int, who: str, changes: list, gaps: list, fill: bool) -> str:
     """A text field Questlight will not accept empty (job title, company name, degree, institution).
     When the resume leaves it out: with fill=False it is reported in `gaps` (id, what, who) so the recruiter can supply it,
@@ -141,12 +150,13 @@ def build_applicant(parsed: dict, adjusted: list = None, gaps: list = None, fill
             c.pop("dateObtained", None)
 
     changes = []
-    raw_work = [j for j in (parsed.get("workExperience") or []) if isinstance(j, dict) and any(j.values())]
-    dropped = sum(1 for j in raw_work if not _valid_date(j.get("startDate")))
-    if dropped == 1:
-        changes.append("1 job had no start date, omitted from profile")
-    elif dropped > 1:
-        changes.append(f"{dropped} jobs had no start date, omitted from profile")
+    # A job with no usable start date can't be sent (Questlight drops it). The recruiter is asked for its start and end month
+    # and year (job_start:N, see corrections.py); with fill=True ("go ahead without it") it is left out, and that is noted.
+    dateless = [(i, j) for i, j in enumerate(parsed.get("workExperience") or []) if isinstance(j, dict) and any(j.values()) and not _valid_date(j.get("startDate"))]
+    if dateless and fill:
+        changes.append("1 job had no start date, omitted from profile" if len(dateless) == 1 else f"{len(dateless)} jobs had no start date, omitted from profile")
+    else:
+        gaps.extend({"id": f"job_start:{i}", "what": "the start and end month and year", "for": _job_ref(j, i)} for i, j in dateless)
     for i, j in jobs:
         company = " ".join(str(j.get("companyName") or "").split())[:60]
         title = " ".join(str(j.get("jobTitle") or "").split())[:60]

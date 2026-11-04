@@ -2,6 +2,7 @@
 (app/intake/corrections.py). Pure logic: nothing is sent anywhere. The rules mirror Questlight's own validator, which
 test_live.py checks against the real service."""
 import copy
+from datetime import date
 import json
 
 import harness
@@ -74,12 +75,17 @@ check("a fresher (no jobs on the resume) has nothing missing", rev["missing"] ==
 check("...and the empty work history is still sent, as an array (the API wants the key)", rev["applicant"]["workExperience"] == [])
 check("a resume without the work history key at all is a fresher too", questlight.review({k: v for k, v in FRESHER.items() if k != "workExperience"})["missing"] == [])
 check("an empty job entry is not a job", questlight.review({**FRESHER, "workExperience": [{}, {"jobTitle": "", "startDate": ""}]})["missing"] == [])
-check("a job without a valid start date is not sent, but does not block profile creation",
-      questlight.review({**FRESHER, "workExperience": [{"jobTitle": "t", "companyName": "c", "startDate": "garbage"}]})["missing"] == [])
-check("...and 'go ahead' (fill) succeeds cleanly",
-      questlight.review({**FRESHER, "workExperience": [{"jobTitle": "t", "companyName": "c", "startDate": "garbage"}]}, fill=True)["missing"] == [])
-check("...and the dropped job is reported in adjusted to notify the recruiter",
-      "1 job had no start date, omitted from profile" in questlight.review({**FRESHER, "workExperience": [{"jobTitle": "t", "companyName": "c", "startDate": "garbage"}]})["adjusted"])
+DATELESS = {**FRESHER, "workExperience": [{"jobTitle": "Network Engineer", "companyName": "Tikona", "startDate": "garbage"}, {"companyName": "Capgemini"}]}
+r = questlight.review(DATELESS)
+check("a job without a valid start date is not sent, and the profile waits: its start and end month and year are asked for, naming the job",
+      [i["id"] for i in r["items"]] == ["job_start:0", "job_start:1"] and r["items"][0]["for"] == "the Network Engineer job at Tikona"
+      and r["items"][1]["for"] == "the job at Capgemini" and all(i["can_supply"] for i in r["items"]) and len(r["missing"]) == 2, r["items"])
+check("...and the profile has no entry for it yet", r["applicant"]["workExperience"] == [])
+rf = questlight.review(DATELESS, fill=True)
+check("'go ahead without it' (fill) leaves those jobs out, with nothing missing, and says so",
+      rf["missing"] == [] and "2 jobs had no start date, omitted from profile" in rf["adjusted"] and rf["applicant"]["workExperience"] == [], rf["adjusted"])
+check("a job with only a start date is not asked for dates (an open end means still working there)",
+      questlight.review({**FRESHER, "workExperience": [{"jobTitle": "t", "companyName": "c", "startDate": "2020-01-01"}]})["missing"] == [])
 check("phone is only recommended", questlight.missing_recommended({"phoneNumber": ""}) == ["phoneNumber"]
       and questlight.missing_recommended({"phoneNumber": "+91 98765 43210"}) == [])
 
@@ -112,4 +118,27 @@ check("a bad email, an empty value, a missing entry and an unknown id are all re
       "email" in apply("email", "nope") and "empty" in apply("name", "") and "no such entry" in apply("job_title:99", "x")
       and "no such entry" in apply("job_title:x", "x") and "unknown id" in apply("salary", "1"))
 check("work history and education can't be typed in", "can't be typed" in apply("workExperience", "x") and "can't be typed" in apply("education", "x"))
+
+# ---- months and years: a job's start and end ----
+pm = corrections.parse_month
+check("a month and year is read in the usual ways", all(pm(v) == (2020, 3) for v in ("03/2020", "3-2020", "2020-03", "Mar 2020", "March 2020", "mar-2020", "03 2020")))
+check("Present, current and till date mean the job is still on", all(pm(v) == "present" for v in ("Present", "current", "Till date", "NOW")))
+check("a bare year, an impossible month, a two-digit year and words are not enough", all(pm(v) is None for v in ("2020", "13/2020", "00/2020", "03/20", "soon", "", "03/1900")))
+check("a start can't be Present, and nothing can be a month that hasn't happened",
+      "like 03/2020" in corrections.date_problem("present") and corrections.date_problem("present", end=True) is None
+      and "hasn't happened" in corrections.date_problem("01/%d" % (date.today().year + 1), end=True) is not None)
+check("an end before the start is caught, an equal month is fine, and Present always fits",
+      corrections.span_problem("03/2020", "02/2020") == "the end is before the start" and corrections.span_problem("03/2020", "03/2020") is None
+      and corrections.span_problem("03/2020", "Present") is None)
+parsed = copy.deepcopy(DATELESS)
+check("a start is written as the first of the month, an end as the last day of its month",
+      apply("job_start:0", "03/2020") is None and apply("job_end:0", "Feb 2021") is None
+      and (parsed["workExperience"][0]["startDate"], parsed["workExperience"][0]["endDate"]) == ("2020-03-01", "2021-02-28"), parsed["workExperience"][0])
+check("Present marks the job as current and clears any end", apply("job_start:1", "01/2019") is None and apply("job_end:1", "present") is None
+      and parsed["workExperience"][1]["isCurrent"] is True and "endDate" not in parsed["workExperience"][1], parsed["workExperience"][1])
+check("an end before the start, a start after the end, a start of Present, a future month and a vague date are all refused",
+      "before the start" in apply("job_end:0", "01/2020") and "after the end" in apply("job_start:0", "06/2021")
+      and "like 03/2020" in apply("job_start:0", "present") and "hasn't happened" in apply("job_start:0", "01/%d" % (date.today().year + 1))
+      and "month and year" in apply("job_end:0", "2020") and "no such entry" in apply("job_start:9", "03/2020"))
+check("...and a refused answer changes nothing", (parsed["workExperience"][0]["startDate"], parsed["workExperience"][0]["endDate"]) == ("2020-03-01", "2021-02-28"))
 finish()
