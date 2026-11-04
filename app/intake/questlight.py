@@ -5,9 +5,9 @@ POST /jobs/applicantMatching/create to put the new candidate on a job at the Scr
 Hardcoded rules only, no model. The API needs a Bearer JWT with the PROFILE:CREATE permission; see .env.example.
 
 Required here: name, email, skills (non-empty) and education. When any is missing the profile is NOT created and the
-missing fields are reported, so a later step can ask the candidate for them. Work experience may be empty: a fresher's
-resume lists no jobs, and Questlight dev accepts workExperience: [] (the key itself must be present, as an array).
-A resume that lists jobs, none of which can be sent (no valid start date), is still held back, so history is not lost silently.
+missing fields are reported, so a later step can ask the candidate for them. Work experience may be empty: freshers
+and resumes whose jobs lack parseable start dates are accepted with workExperience: [] (the key itself must be
+present, as an array; the resume file is attached to the profile in Questlight so history is preserved).
 """
 import json
 import os
@@ -22,6 +22,17 @@ TIMEOUT_S = 60
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
 MIME = {".pdf": "application/pdf",
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+
+
+def upload_name(name: str, ext: str) -> str:
+    """The resume's file name as Questlight accepts it. Questlight refuses a name that looks like a path (HTTP 400 "The file
+    name must not contain a path"), and a run of dots such as "CV........ (1).pdf" counts as one, so slashes and control
+    characters go, a run of dots becomes a space, and the name is kept to 100 characters. The extension is always the real one."""
+    stem = os.path.splitext(os.path.basename((name or "").replace("\\", "/")))[0]
+    stem = re.sub(r"[\x00-\x1f\x7f]", "", stem)
+    stem = re.sub(r"\.{2,}", " ", stem)
+    stem = re.sub(r"\s+", " ", stem).strip(" .")[:100].strip(" .")
+    return (stem or "resume") + ext
 
 
 def _clean(value):
@@ -202,34 +213,27 @@ def review(parsed: dict, fill: bool = False, source: str = "manual upload") -> d
     adjusted (what was filled in or shortened). With fill=True the gaps are filled with "Not specified" instead."""
     adjusted, gaps = [], []
     applicant = build_applicant(parsed, adjusted, gaps, fill, source)
-    basics = missing_required(applicant, lists_jobs(parsed))
-    # name, email and skills can be typed in by the recruiter; work history and education need a resume that shows them
+    basics = missing_required(applicant)
+    # name, email and skills can be typed in by the recruiter; education needs a resume that shows it
     items = [{"id": b, "what": b, "for": "the candidate", "can_supply": b in ("name", "email", "skills")} for b in basics]
     gaps = [dict(g, can_supply=True) for g in gaps]
     return {"applicant": applicant, "adjusted": adjusted, "items": items + gaps,
             "missing": basics + [f"{g['what']} for {g['for']}" for g in gaps]}
 
 
-def lists_jobs(parsed: dict) -> bool:
-    """True when the resume describes at least one job, even one that cannot be sent (no valid start date).
-    A fresher's resume describes none."""
-    return any(isinstance(j, dict) for j in _clean(parsed.get("workExperience") or []))
-
-
-def missing_required(applicant: dict, has_jobs: bool) -> list:
+def missing_required(applicant: dict) -> list:
     """Fields this resume lacks that a profile needs. Empty list means the profile can be created.
-    Work experience is only missing when the resume lists jobs and none of them could be sent; a fresher has none to send."""
+    Work experience is never blocking: Questlight accepts workExperience: [], so a fresher and a resume whose jobs
+    lack parseable start dates both go through (the jobs that could not be sent are not silently lost: they stay in
+    the parsed JSON and on the trace)."""
     missing = []
     if not str(applicant.get("name") or "").strip():
         missing.append("name")
     if not EMAIL_RE.match(str(applicant.get("email") or "")):
         missing.append("email")
-    for field in ("skills", "workExperience", "education"):
-        if applicant.get(field):
-            continue
-        if field == "workExperience" and not has_jobs:
-            continue
-        missing.append(field)
+    for field in ("skills", "education"):
+        if not applicant.get(field):
+            missing.append(field)
     return missing
 
 
@@ -294,7 +298,7 @@ async def create_profile(applicant: dict, name: str, data: bytes, ext: str) -> d
     attach = os.getenv("QUESTLIGHT_ATTACH_RESUME", "true").lower() != "false"
     with tracing.span("POST create-applicant") as s:
         s.set(resume_attached=attach)
-        result = await _send_profile(headers, parts + ([("resume", (name, data, MIME[ext]))] if attach else []))
+        result = await _send_profile(headers, parts + ([("resume", (upload_name(name, ext), data, MIME[ext]))] if attach else []))
         # A 5xx with the file attached (its upload or the masking failing) saved nothing (one transaction), so the profile
         # is created without the file rather than not at all. A timeout is not retried: that profile may have been saved.
         if attach and result["status"] == "failed" and result.get("http_status", 0) >= 500:
