@@ -20,6 +20,9 @@ job mapping, matching, the audit log) is plain, hardcoded code.
                               no AI)             or: what is missing)     no AI)               at Screening, no AI)
                        every step is written to the audit log and traced
 
+ (right after the intake checks the email in the resume is looked up in Questlight, GET /applicants/{email}: a candidate who is
+ already there is answered at once, without the parse)
+
  JD ─► intake checks ─► "What is it?" ─► parse JD ─► duplicate? ─► create the job ─► Questlight's matching ─► screen the best
         (PDF, DOCX,      (rules: a JD,    (AI,        (Questlight   (or: what is       (started, as its       (own ranking of the
          TXT, DOC, text)  a resume, junk)  Questlight)  check)        missing, to ask)   own UI does)           candidates, 40+ only)

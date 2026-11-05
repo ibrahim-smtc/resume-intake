@@ -38,13 +38,17 @@ def screening(roles):
 def profile_view(profile: dict) -> dict:
     return {"status": profile.get("status"), "message": profile.get("message"),
             "candidate_id": profile.get("applicantId"), "resume_attached": profile.get("resume_attached"),
-            "adjusted": profile.get("adjusted") or []}
+            "adjusted": profile.get("adjusted") or [],
+            **({"existing": profile["existing"]} if profile.get("existing") else {})}
 
 
 def next_hint(status):
     """What the agent should do next, for a profile in this state (None when there is nothing more to do)."""
     if status == "failed":
         return "create_profile(file_id) retries the creation"
+    if status == "duplicate":
+        return ("tell the recruiter this candidate is already in Questlight (see profile.existing: its code, status, whether a resume "
+                "is on file) and that nothing was changed or created")
     if status in ("not_created", "skipped"):
         return ("ask the recruiter for each missing item, then provide_missing_details(file_id, answers) and "
                 "create_profile(file_id); or create_profile(file_id, fill_missing=true) if they say to go ahead without it")

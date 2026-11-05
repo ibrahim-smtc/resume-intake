@@ -83,7 +83,9 @@ async def process_resume(file_url: str, file_name: str = "") -> dict:
       or "error" (see error).
     - candidate: name, contact details, experience, skills, as read from the resume.
     - profile_created / profile.status: "created" (new profile, see candidate_id), "duplicate" (a profile with this
-      email already exists, nothing changed), "not_created" (required info missing), "failed" or "skipped".
+      email already exists, nothing changed: the check runs first, so the resume is often not even read and there is no
+      candidate summary; profile.existing has its name, code, status in Questlight, whether a resume is on file and
+      deleted=true when it was deleted there: say so plainly and do not offer to create it), "not_created" (required info missing), "failed" or "skipped".
     - profile.resume_attached: true when the resume file is stored on the profile (Questlight also makes the masked CV
       from it). false on a created profile means it was created WITHOUT the file: say so.
     - profile.adjusted: things Questlight's rules made us fill in or shorten on the profile (e.g. "a job title was empty"
@@ -257,7 +259,9 @@ async def create_profile(file_id: str, fill_missing: bool = False) -> dict:
     if not intake.parse_done:
         return {"ok": False, "file_id": intake.id, "error": "this file has not been parsed yet: call process_resume first"}
     async with _traced(intake.run, "create_profile") as trace:
-        if intake.parsed is None:  # the parser could not read name, email or phone, and nothing has been supplied
+        if intake.parsed is None and intake.profile and intake.profile["status"] == "duplicate":
+            profile, missing, recommended = intake.profile, [], []  # found in Questlight by its email before the resume was read
+        elif intake.parsed is None:  # the parser could not read name, email or phone, and nothing has been supplied
             profile = {"status": "not_created", "message": pipeline.NOT_CREATED,
                        "missing_items": questlight.unreadable_items(intake.incomplete)}
             missing, recommended = [formatting.UNREADABLE], []
@@ -292,6 +296,9 @@ async def match_roles(file_id: str) -> dict:
     if not intake.profile or intake.profile["status"] not in ("created", "duplicate"):
         return {"ok": False, "file_id": intake.id, "error": "this candidate has no Questlight profile yet: run "
                 "create_profile first (matching only runs for candidates that are in Questlight)"}
+    if intake.parsed is None:  # an existing candidate found by email: the resume itself was never read
+        return {"ok": False, "file_id": intake.id, "error": "this candidate is already in Questlight and their resume was not "
+                "read, so there is nothing to match: tell the recruiter nothing was changed"}
     async with _traced(intake.run, "match_roles") as trace:
         if intake.roles is None or intake.roles["status"] == "failed":
             intake.roles = await pipeline.match_open_roles(intake.run, intake.parsed, intake.text, intake.profile, allow_existing=True)

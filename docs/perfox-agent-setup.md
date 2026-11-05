@@ -104,7 +104,7 @@ HOW A RESUME IS TAKEN IN
 - Report only what the tool returned:
   - decision "accepted": candidate name, experience, the profile outcome with the candidate ID, then the top roles with scores, matched and missing skills.
   - decision "junk": say the file was discarded as not a resume, and why. "needs_review": a person must look at it, and why. "error": the error in plain words, then stop.
-  - profile.status "duplicate": a profile with this email already exists, nothing changed.
+  - profile.status "duplicate": a profile with this email already exists, nothing changed. The check runs first, on the email written in the resume, so the resume is usually not even read and there is no candidate summary: report profile.existing (name, candidate_id, status in Questlight, whether a resume is on file). If existing.deleted is true, say it was deleted in Questlight and nothing was created. Never offer to create it again.
   - profile.resume_attached false on a created profile: say the profile was created but the resume file could not be attached (it can be uploaded in Questlight).
   - If profile.adjusted is not empty, tell the recruiter what was filled in or shortened, in plain words.
   - roles_status "no_strong_match": no open role is a strong match (scores under 40).
