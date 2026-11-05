@@ -24,7 +24,7 @@ from datetime import date
 
 from app import job_pipeline, pipeline, settings
 from app.agent import chat_bridge, downloads, formatting, forms, intakes
-from app.agent.mcp_app import mcp
+from app.agent.mcp_app import end_user_phone, mcp
 from app.intake import candidates, corrections, jobs, matching, questlight
 from app.observability import audit, tracing
 from app.parsing.resume.fix_normlization import fix_dates_and_experience
@@ -136,6 +136,7 @@ async def _take_resume(name: str, data: bytes, token) -> dict:
     out = formatting.for_agent(result)
     intake = intakes.keep_for_follow_up(state, name, data, result, token)
     if intake:  # the same file can now be followed up: supply what is missing, retry, match roles
+        intake.notify_phone = end_user_phone.get()  # where a fill-in form's outcome is sent (WhatsApp only: no number elsewhere)
         out["file_id"] = intake.id
         hint = formatting.next_hint((out["profile"] or {}).get("status"))
         if hint:

@@ -52,6 +52,7 @@ app/
     tools.py           the 9 tools the agent can call
     intakes.py         the agent's short-term memory of the files it has taken in
     forms.py           the fill-in form for what a resume lacks: a Pydantic model built per file, at /fill/<token>
+    notify.py          tells a WhatsApp recruiter how their form ended (Perfox POST /messages)
     chat_bridge.py     the page's text box -> the agent's webhook
     formatting.py, downloads.py, tool_guide.py
   observability/     audit.py (the audit log), tracing.py (per-step timings and tokens)
@@ -87,6 +88,7 @@ All of them are in [.env.example](.env.example), with what each means. The ones 
 | `PERFOX_API_KEY`, `PERFOX_BASE_URL` | the Perfox workspace that reads resumes and JDs (the key needs the `documents:extract` scope) |
 | `MCP_TOKEN` | the bearer token the Perfox agent must send to `/mcp` |
 | `PERFOX_WEBHOOK_URL`, `PERFOX_WEBHOOK_SECRET` | connect the chat page to the Perfox agent (without them the page uploads straight into the pipeline) |
+| `PERFOX_WHATSAPP_FROM` (+ optional `PERFOX_MESSAGING_KEY`) | optional: after a recruiter submits the fill-in form from WhatsApp, the outcome is sent to them on WhatsApp too. The number of the agent's WhatsApp trigger turns it on; it sends with `PERFOX_API_KEY` (which then needs the `conversations:write` scope) or, if set, a send-only `PERFOX_MESSAGING_KEY` |
 | `APP_PASSWORD` | optional password for the pages and APIs. Not set = open to anyone with the URL (fine for testing) |
 
 ## Tests

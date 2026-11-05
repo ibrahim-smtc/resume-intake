@@ -16,7 +16,7 @@ from typing import Annotated
 from pydantic import AfterValidator, ConfigDict, Field, ValidationError, create_model
 
 from app import settings
-from app.agent import formatting, intakes
+from app.agent import formatting, intakes, notify
 from app.intake import corrections, questlight
 
 # What each detail is called on the form, which kind of input it gets, and how long it may be.
@@ -231,6 +231,7 @@ async def submit(intake, body: dict) -> tuple[int, dict]:
             return 200, {**view(intake), "message": made.get("error") or "The profile couldn't be created. Please try again."}
         if made["profile"]["status"] in ("created", "duplicate"):
             await tools.match_roles(intake.id)
+            await notify.form_result(intake)  # on WhatsApp the recruiter is told there too (never raises)
             _locks.pop(intake.id, None)
             return 200, view(intake)
         return 200, {**view(intake), "message": made["profile"].get("message") or "The profile couldn't be created yet."}

@@ -7,6 +7,7 @@ Security: every call needs "Authorization: Bearer <MCP_TOKEN>" (set MCP_TOKEN; r
 integration's bearer credential). With no MCP_TOKEN set, /mcp refuses everything.
 """
 import contextlib
+import contextvars
 import hmac
 import importlib
 import os
@@ -28,6 +29,11 @@ mcp = FastMCP(
 )
 
 
+# Perfox forwards who is talking as headers on every tool call (X-Sa-End-User-Phone is the recruiter's number on WhatsApp). The tools
+# read it here to remember where to send the outcome of a fill-in form. It is never logged or stored beyond the file's 30 minutes.
+end_user_phone: contextvars.ContextVar = contextvars.ContextVar("end_user_phone", default="")
+
+
 class _Endpoint:
     """The /mcp route: checks the bearer token, then hands the request to the MCP SDK."""
 
@@ -43,7 +49,15 @@ class _Endpoint:
         if "application/json" not in headers.get("accept", ""):
             scope = dict(scope, headers=[(k, v) for k, v in scope["headers"] if k != b"accept"]
                          + [(b"accept", b"application/json, text/event-stream")])
-        await mcp.session_manager.handle_request(scope, receive, send)
+        seen = sorted(k for k in headers.keys() if k.lower().startswith("x-sa-"))
+        if seen:  # names only, never values: shows in the logs whether Perfox sends the end user's details
+            print(f"[mcp] end-user headers from Perfox: {', '.join(seen)}")
+        phone = "".join(headers.get("x-sa-end-user-phone", "").split())
+        marker = end_user_phone.set(phone if phone.lstrip("+").isdigit() else "")
+        try:
+            await mcp.session_manager.handle_request(scope, receive, send)
+        finally:
+            end_user_phone.reset(marker)
 
 
 def attach(app) -> None:

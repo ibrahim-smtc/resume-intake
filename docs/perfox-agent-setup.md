@@ -179,6 +179,26 @@ draft answers `404 workflow not found or not published`.
 
 The Auth Secret is shown in plain text by Perfox's API, so treat it as shown: generate a new one if it was ever pasted somewhere.
 
+### Telling a WhatsApp recruiter how their form ended (optional)
+
+On WhatsApp the recruiter gets the fill-in form as a link and submits it on our page, where the agent can't see it. To have the
+result arrive on WhatsApp too, our server sends it through Perfox after the form creates the profile:
+
+1. In Vercel add `PERFOX_WHATSAPP_FROM=<the number of the agent's WhatsApp trigger>` (E.164, e.g. +918065492151) and redeploy.
+   Without it nothing is sent and nothing else changes.
+2. The message is sent with `PERFOX_API_KEY`, so that key needs the `conversations:write` scope next to `documents:extract` (scopes
+   are chosen when a key is generated; generate one with both and replace it in Vercel if yours lacks it). Without the scope Perfox
+   answers 403, nothing is sent and the audit log says `failed`. To keep sending apart from reading (a leaked key that can send could
+   message people from the business number), generate a second key with only `conversations:write` and set it as
+   `PERFOX_MESSAGING_KEY`; it is then used instead.
+3. The recruiter's number comes from Perfox, which forwards it as the `X-Sa-End-User-Phone` header on every tool call. The
+   Vercel logs show a line `[mcp] end-user headers from Perfox: ...` (names only) so you can confirm it arrives.
+
+The message is an ordinary text: the candidate's name and Questlight code, and the jobs they were screened for. It is deliverable
+because the recruiter has just messaged the agent (WhatsApp's 24-hour window). It is sent once per file, and a refusal or a timeout
+only means no message: the page still shows the result. The audit log records `notify_whatsapp` as sent, failed or skipped,
+never the number.
+
 ## 5. Try it
 
 1. In the page, type `/tools` to see what the assistant can do (answered by the page, not the agent).
