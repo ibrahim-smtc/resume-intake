@@ -24,6 +24,10 @@ PARSER = "perfox"
 # Perfox API credentials
 PERFOX_BASE_URL = os.getenv("PERFOX_BASE_URL", "").rstrip("/")
 PERFOX_API_KEY = os.getenv("PERFOX_API_KEY", "")
+# Telling a recruiter on WhatsApp how their fill-in form ended (app/agent/notify.py): the WhatsApp number the agent's trigger uses, and a
+# Perfox key with the conversations:write scope (POST /messages): PERFOX_MESSAGING_KEY, else PERFOX_API_KEY. Without the number, nothing is sent.
+PERFOX_MESSAGING_KEY = os.getenv("PERFOX_MESSAGING_KEY", "")
+PERFOX_WHATSAPP_FROM = os.getenv("PERFOX_WHATSAPP_FROM", "").strip()
 
 # Questlight's matching service (its own semantic matching), started for each job created from a JD.
 MATCHING_BASE_URL = os.getenv("MATCHING_BASE_URL", "https://dev-api.quest-light.com/matching")

@@ -39,6 +39,8 @@ class Intake:
         self.job: dict | None = None
         self.parse_done = False
         self.upload = None  # the token of the intake-file link this file came in with (chat uploads), if any
+        self.notify_phone = ""  # the recruiter's WhatsApp number Perfox forwarded with the call (app/agent/notify.py); never logged
+        self.notified = False   # the outcome of a fill-in form has been sent to that number
         self.form_token = None  # the token of this file's fill-in form link, once one was handed out (app/agent/forms.py)
 
 
