@@ -128,6 +128,36 @@ async def read_with_contact(run: audit.Run, name: str, ext: str, data: bytes, te
     return p
 
 
+async def existing_step(run: audit.Run, email: str, text: str = "", name_check: bool = True):
+    """The "Already in Questlight?" check: GET /applicants/{email}. Returns (profile, looked_up): profile is a finished
+    "duplicate" profile when the candidate exists (nothing is created or read any further), else None; looked_up says whether
+    Questlight answered, so the same email isn't asked twice.
+    Early (name_check=True): the email comes from the document's text, before the parse, so the person must also show up
+    by name in the text, otherwise (a stray email) the resume is read as usual. Late (name_check=False): the parsed email."""
+    with tracing.span("check applicant exists") as s:
+        found = await questlight.find_by_email(email)
+        s.set(outcome=found["status"])
+        if found["status"] == "error":
+            s.fail(found["message"])
+        known = found["status"] in ("found", "not_found")
+        if found["status"] == "found" and name_check and not questlight.name_in_text(found.get("name", ""), text):
+            s.set(outcome="found, name differs")
+            run.log("check_exists", "name_differs", "a profile with this email exists, but its name is not in the resume: reading the resume as usual",
+                    record_id=found.get("applicantId"))
+            return None, False  # the parsed email is checked again after the parse
+    run.log("check_exists", found["status"], found["message"], record_id=found.get("applicantId"))
+    if found["status"] != "found":
+        return None, known
+    if found["deleted"]:  # the code is added where the message is shown (the page, profile.candidate_id)
+        message = ("a profile with this email was found in Questlight but it has been deleted there: nothing was created "
+                   "or changed, a person has to decide whether it is brought back")
+    else:
+        message = "this candidate is already in Questlight, so nothing was created or changed"
+    return {"status": "duplicate", "message": message, "applicantId": found.get("applicantId"), "id": found["id"],
+            "existing": {"name": found["name"], "candidate_status": found["candidate_status"],
+                         "has_resume": found["has_resume"], "deleted": found["deleted"]}}, known
+
+
 async def load_into_questlight(run: audit.Run, data: bytes, ext: str, parsed: dict, fill: bool = False):
     """The "Load into Questlight" block. Returns (missing required fields, missing recommended fields, profile result).
     The profile is created from the real parsed data; only the redacted copy ever goes back to the page.
@@ -221,6 +251,19 @@ async def run_pipeline(run: audit.Run, name: str, ext: str, data: bytes, state: 
         return fail(run, "intake", f"this looks like a resume, but resumes are read from PDF or DOCX only ({ext} given): "
                     "ask for it as a PDF or DOCX")
 
+    # Already in Questlight? The email written in the resume is looked up first (about 1 s), so a candidate who exists is
+    # answered at once, without the 20-30 s parse, the questions about missing details or the profile call.
+    asked = None  # the email Questlight has already answered for
+    emails = questlight.emails_in(text)
+    if len(emails) == 1:
+        existing, known = await existing_step(run, emails[0], text)
+        if existing:
+            if state is not None:
+                state.update(text=text, parsed=None, incomplete=None)
+            note = "found by the email in the resume, so the resume was not read"
+            return success(name, verdict, None, None, note, [], [], existing)
+        asked = emails[0] if known else None
+
     # Reading the resume takes about 14 s; Questlight's open-jobs list (about 3 s when it is not cached) downloads meanwhile,
     # so match_open_roles finds it ready instead of waiting for it.
     warm_up = asyncio.create_task(matching.warm_open_jobs())
@@ -228,6 +271,13 @@ async def run_pipeline(run: audit.Run, name: str, ext: str, data: bytes, state: 
         p = await parse_step(run, name, ext, data)
         if p["failed"]:
             return p["failed"]
+        email = str((p["parsed"] or {}).get("email") or "").strip().lower()
+        if email and email != asked and questlight.EMAIL_RE.match(email):  # not found early (scanned PDF, several emails): by the parsed one
+            existing, _ = await existing_step(run, email, name_check=False)
+            if existing:
+                if state is not None:
+                    state.update(text=text, parsed=p["parsed"], incomplete=None)
+                return success(name, verdict, p["parsed"], p["masked_b64"], p["warning"], [], [], existing)
         if state is not None:
             state.update(text=text, parsed=p["parsed"], incomplete=p["incomplete"])
         if p["incomplete"]:

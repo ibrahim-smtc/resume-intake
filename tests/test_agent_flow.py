@@ -176,7 +176,7 @@ conn = sqlite3.connect(os.environ["AUDIT_DB"])
 dump = json.dumps(conn.execute("SELECT * FROM audit_log").fetchall()) + json.dumps(conn.execute("SELECT details, error FROM trace_spans").fetchall())
 steps = [x[0] for x in conn.execute("SELECT step FROM audit_log WHERE run_id = ? ORDER BY id", (o["p1"]["file_id"],))]
 conn.close()
-check("audit: the supplied details are logged by field id only, between parse and load", steps[:3] == ["junk_check", "parse", "load_questlight"] and "correction" in steps, steps)
+check("audit: the supplied details are logged by field id only, between parse and load", [s for s in steps if s != "check_exists"][:3] == ["junk_check", "parse", "load_questlight"] and "correction" in steps, steps)
 check("audit and traces hold no names, companies or values the recruiter typed",
       not any(w in dump for w in ("Walmart", "Tata", "Data Engineer", "Harish", "LatentView", "Test Person", "test.person@example.com", "90000 12345")))
 check("the saved files are kept per process, and at most 20 at once", len(intakes._intakes) <= intakes.MAX_FILES)

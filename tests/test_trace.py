@@ -42,6 +42,11 @@ async def create(request: Request):
     return JSONResponse({"data": {"_id": "u1", "applicantId": "CAN-051026-00099"}}, 201)
 
 
+@mock.get("/api/applicants/{email}")
+async def by_email(email: str):
+    return {"statusCode": 200, "message": "Request successful", "data": None}   # nobody with this email yet
+
+
 @mock.post("/api/jobs/applicantMatching/create")
 async def screen():
     return JSONResponse({"data": {}}, 201)
@@ -81,7 +86,9 @@ r = upload("r01_standard.pdf")
 t = r["trace"]
 spans = {s["name"]: s for s in t["spans"]}
 # the open-jobs download starts while the resume is being read (first "fetch open jobs"); matching then finds it cached (second)
-expected = ["resume intake", "intake checks", "junk check", "parse resume", "fetch open jobs", "load into Questlight", "POST create-applicant",
+# "check applicant exists" runs on the email written in the resume (before the parse) and, when the parser read another one, again after it
+expected = ["resume intake", "intake checks", "junk check", "check applicant exists", "parse resume", "fetch open jobs", "check applicant exists",
+            "load into Questlight", "POST create-applicant",
             "match open roles", "fetch open jobs", "score jobs", "screen top roles",
             "POST applicantMatching/create", "POST applicants/change-status",   # the new candidate's status goes to SCREENING once
             "POST applicantMatching/create", "POST applicantMatching/create"]

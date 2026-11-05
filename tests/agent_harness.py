@@ -20,6 +20,9 @@ class Fakes:
         self.creates = []          # the payloads "sent" to Questlight
         self.create_mode = "ok"    # "ok" | "fail_once" | "duplicate"
         self.parse_delay = 0       # seconds the fake parser takes (to test calls that overlap)
+        self.existing = {}         # email (lower case) -> what Questlight's "is this email already a profile?" check answers (found)
+        self.lookups = []          # the emails that check was asked about
+        self.lookup_mode = "ok"    # "ok" | "error" (the check itself fails)
         self.url = self.headers = self.server = None
 
 
@@ -62,6 +65,17 @@ def start(parsed_by_stem: dict, files: dict = None, token: str = "test-token-123
             return {"status": "failed", "message": "Questlight didn't answer within 60s, no profile was confirmed"}
         return {"status": "created", "message": "stubbed: nothing was written", "applicantId": f"CAN-STUB-{len(fakes.creates)}"}
 
+    async def fake_find(email):
+        fakes.lookups.append(email)
+        if fakes.lookup_mode == "error":
+            return {"status": "error", "message": "the existing-candidate check returned HTTP 503"}
+        found = fakes.existing.get(email.strip().lower())
+        if found is None:
+            return {"status": "not_found", "message": "no profile with this email in Questlight"}
+        return {"status": "found", "message": "a profile with this email exists in Questlight", "id": "uuid-existing-1",
+                "applicantId": "CAN-EXIST-1", "name": "Rohit Verma", "candidate_status": "SCREENING", "has_resume": True,
+                "deleted": False, **found}
+
     real_download = downloads.download
 
     async def fake_download(url, file_name):
@@ -73,6 +87,7 @@ def start(parsed_by_stem: dict, files: dict = None, token: str = "test-token-123
 
     service.parse_resume = fake_parse
     questlight.create_profile = fake_create
+    questlight.find_by_email = fake_find
     downloads.download = fake_download
     jobs.prime(matching)
 

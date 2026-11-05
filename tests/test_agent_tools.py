@@ -151,7 +151,7 @@ check("an expired file_id is refused", o["expired"]["ok"] is False and "expired"
 conn = sqlite3.connect(os.environ["AUDIT_DB"])
 steps = [x[0] for x in conn.execute("SELECT step FROM audit_log WHERE run_id = ? ORDER BY id", (fid,))]
 conn.close()
-check("one run id for the file: junk check, parse, load into Questlight, matching", steps[:4] == ["junk_check", "parse", "load_questlight", "match_roles"], steps)
+check("one run id for the file: junk check, existing-candidate check, parse, load into Questlight, matching", steps[:5] == ["junk_check", "check_exists", "parse", "load_questlight", "match_roles"], steps)
 trace = tracing.get_trace(fid)
 check("process_resume's trace id is the run id, readable with the file name", trace and trace["file"] == "Ananya.pdf" and "parse resume" in [x["name"] for x in trace["spans"]])
 check("a step tool's trace id is run id + tool", any(x["trace_id"] == f"{fid}-match_roles" and x["file"] == "Ananya.pdf" for x in tracing.recent_traces(100)))

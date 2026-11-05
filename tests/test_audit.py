@@ -16,6 +16,11 @@ from fastapi.responses import JSONResponse  # noqa: E402
 mock = FastAPI()
 
 
+@mock.get("/api/applicants/{email}")
+async def by_email(email: str):
+    return {"statusCode": 200, "message": "Request successful", "data": None}   # nobody with this email yet
+
+
 @mock.post("/api/applicants/create-applicant")
 async def create(request: Request):
     form = await request.form()
@@ -66,12 +71,13 @@ check("screening decisions are counted", summary["junk_check"] == {"accepted": 3
 check("profile outcomes are counted", summary["load_questlight"] == {"created": 1, "not_created": 1, "duplicate": 1}, summary)
 check("intake errors and parse results are counted", summary["intake"] == {"error": 2} and summary["parse"] == {"ok": 3}, summary)
 check("matching is logged, here as failed (the mock has no jobs)", summary["match_roles"] == {"failed": 1}, summary)
+check("the existing-candidate check is logged for every resume that was read (nobody exists in this mock)", set(summary.get("check_exists", {})) == {"not_found"} and summary["check_exists"]["not_found"] >= 3, summary.get("check_exists"))
 check("the Questlight record id is on the row", any(r["record_id"] == "CAN-031026-00009" and r["step"] == "load_questlight" for r in rows))
 runs = {}
 for r in rows:
     runs.setdefault(r["run_id"], []).append(r["step"])
 check("nine uploads are nine runs, with the steps each one reached",
-      len(runs) == 9 and sorted(len(v) for v in runs.values()) == [1, 1, 1, 1, 1, 1, 3, 3, 4], sorted(len(v) for v in runs.values()))
+      len(runs) == 9 and sorted(len(v) for v in runs.values()) == [1, 1, 1, 1, 1, 1, 4, 5, 5], sorted(len(v) for v in runs.values()))
 check("every row is stamped with its channel", {r["channel"] for r in rows} == {"manual upload"})
 
 # privacy: nothing about the candidate in the database file

@@ -13,12 +13,14 @@ import json
 import os
 import re
 from datetime import date
+from urllib.parse import quote
 
 import httpx
 
 from app.observability import tracing
 
 TIMEOUT_S = 60
+LOOKUP_TIMEOUT_S = 8  # the "is this email already in Questlight?" check: when it is slow the intake goes on without it
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
 MIME = {".pdf": "application/pdf",
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
@@ -328,6 +330,64 @@ async def create_profile(applicant: dict, name: str, data: bytes, ext: str) -> d
         if result["status"] == "failed":
             s.fail(result["message"])
     return result
+
+
+# ---------- does this candidate already exist? ----------
+
+FIND_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
+
+
+def emails_in(text: str) -> list:
+    """The distinct email addresses written in a document's text (lower case, in the order they appear)."""
+    seen = []
+    for m in FIND_EMAIL.findall(text or ""):
+        m = m.strip(".").lower()
+        if m not in seen:
+            seen.append(m)
+    return seen
+
+
+def name_in_text(name: str, text: str) -> bool:
+    """Does the document show this person's name? True when the first and the last word of the name both appear as words
+    (a lone initial doesn't count). It guards the early "already exists" answer against a stray email that is not the candidate's."""
+    words = [w for w in re.findall(r"[^\W\d_]+", (name or "").lower()) if len(w) >= 2]
+    if not words:
+        return False
+    found = set(re.findall(r"[^\W\d_]+", (text or "").lower()))
+    return words[0] in found and words[-1] in found
+
+
+async def find_by_email(email: str) -> dict:
+    """GET /applicants/{email}: is there already a profile for this email? (Questlight ignores case and spaces.)
+    Returns {"status": found | not_found | error | skipped, "message", ...}; for "found" also id, applicantId (the CAN-... code),
+    name, candidate_status, has_resume and deleted (a record that was deleted in Questlight's UI still answers here).
+    Questlight answers 200 with data null for an email it doesn't know. An error never stops an intake: the caller goes on, and
+    create-applicant's own 409 stays the last line of defence."""
+    headers = auth_headers()
+    if not headers:
+        return {"status": "skipped", "message": "QUESTLIGHT_TOKEN is not set"}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(LOOKUP_TIMEOUT_S)) as client:
+            resp = await client.get(f"{api_base()}/applicants/{quote(email.strip(), safe='')}", headers=headers)
+    except httpx.TimeoutException:
+        return {"status": "error", "message": f"Questlight didn't answer the existing-candidate check within {LOOKUP_TIMEOUT_S}s"}
+    except httpx.HTTPError as exc:
+        return {"status": "error", "message": f"couldn't reach Questlight ({type(exc).__name__})"}
+    tracing.current().set(http_status=resp.status_code)
+    if resp.status_code != 200:
+        return {"status": "error", "message": f"the existing-candidate check returned HTTP {resp.status_code}"}
+    try:
+        data = resp.json().get("data")
+    except (ValueError, AttributeError):
+        return {"status": "error", "message": "the existing-candidate check had an unexpected format"}
+    if not data:
+        return {"status": "not_found", "message": "no profile with this email in Questlight"}
+    if not isinstance(data, dict) or not data.get("_id"):
+        return {"status": "error", "message": "the existing-candidate check had an unexpected format"}
+    return {"status": "found", "message": "a profile with this email exists in Questlight", "id": data["_id"],
+            "applicantId": data.get("applicantId"), "name": str(data.get("name") or "").strip(),
+            "candidate_status": str(data.get("status") or ""), "has_resume": bool(data.get("resume")),
+            "deleted": bool(data.get("isDeleted") or data.get("deleted_at"))}
 
 
 # A candidate whose overall status is one of these gets SCREENING once added to a job, as Questlight's own "add to
