@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Candidate details</title>
+  <!-- The fill-in form on a page of its own, for a recruiter who got the link on WhatsApp (app/agent/forms.py). The long random
+       token in this page's address is the form's only key: this page and the two files below open without the app's password. -->
+  <link rel="stylesheet" href="/static/form.css">
+  <style>
+    :root { --ink: #14202e; --muted: #5b6776; --line: #e6eaef; --green: #17612b; --red: #8f2020; --red-bg: #fbe4e4;
+      --amber: #7a5200; --amber-bg: #fff1d6; }
+    body { margin: 0; background: #f4f6f9; color: var(--ink);
+      font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    main { max-width: 560px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 15px; font-weight: 600; color: var(--muted); margin: 0 0 4px; }
+    .fillform { max-width: none; }
+    /* A phone set to dark mode. Last, so it wins over the rules above. */
+    @media (prefers-color-scheme: dark) {
+      :root { --ink: #eaf1fa; --muted: #9fb0c5; --line: rgba(255, 255, 255, .14); --green: #6ee7a8; --red: #ff9b9b;
+        --red-bg: rgba(248, 113, 113, .18); --amber: #fcd58a; --amber-bg: rgba(251, 191, 36, .16); }
+      body { background: #0b1322; }
+      .fillform { background: rgba(255, 255, 255, .06); border-color: rgba(255, 255, 255, .14); }
+      .fillform input, .fillform textarea { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .18); }
+      .fillform .ff-row.missing input, .fillform .ff-row.missing textarea { border-color: rgba(252, 213, 138, .5); }
+      .fillform .ff-skip:hover { background: rgba(255, 255, 255, .08); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Resume intake</h1>
+    <div id="form"></div>
+  </main>
+  <script src="/static/form-view.js"></script>
+  <script>
+    FillForm.open(document.getElementById("form"), location.pathname.split("/").filter(Boolean).pop() || "");
+  </script>
+</body>
+</html>

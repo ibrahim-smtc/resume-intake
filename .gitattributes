@@ -1,0 +1,7 @@
+# Test fixtures and images are binary: never convert their line endings (a converted PDF or DOC is a broken one).
+*.pdf  binary
+*.docx binary
+*.doc  binary
+*.png  binary
+*.jpg  binary
+*.ico  binary

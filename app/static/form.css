@@ -1,0 +1,45 @@
+/* The fill-in form for missing resume details (form-view.js). It uses the chat page's colour tokens, with the same values as
+   fallbacks for fill.html, and follows the chat page's dark theme. */
+.fillform, .fillform * { box-sizing: border-box; }
+.fillform { margin-top: 12px; padding: 16px 18px; border: 1px solid var(--line, #e6eaef); border-radius: 14px;
+  background: rgba(255, 255, 255, .72); color: var(--ink, #14202e); font-size: 14px; line-height: 1.45; max-width: 560px; }
+.fillform .ff-title { font-weight: 700; font-size: 16px; }
+.fillform .ff-title.ff-done { color: var(--green, #17612b); }
+.fillform .ff-file { color: var(--muted, #5b6776); font-size: 12.5px; margin-top: 2px; word-break: break-all; }
+.fillform .ff-intro, .fillform .ff-note { color: var(--muted, #5b6776); font-size: 13px; margin: 8px 0 0; }
+.fillform .ff-msg { margin: 10px 0 0; font-size: 13.5px; }
+.fillform .ff-msg.bad { color: var(--red, #8f2020); }
+.fillform .ff-blocked { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; font-size: 13px;
+  color: var(--amber, #7a5200); background: var(--amber-bg, #fff1d6); }
+.fillform .ff-group { margin: 16px 0 6px; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted, #5b6776); }
+.fillform .ff-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.fillform .ff-label { font-weight: 600; font-size: 13.5px; }
+.fillform .ff-req { color: var(--red, #8f2020); }
+.fillform .ff-hint { color: var(--muted, #5b6776); font-size: 12.5px; }
+.fillform .ff-error { color: var(--red, #8f2020); font-size: 12.5px; }
+.fillform input, .fillform textarea { font: inherit; font-size: 15px; width: 100%; box-sizing: border-box; padding: 9px 11px;
+  border: 1px solid var(--line, #e6eaef); border-radius: 10px; background: #fff; color: var(--ink, #14202e); resize: vertical; }
+.fillform input:focus, .fillform textarea:focus { outline: none; border-color: #3b6fd4; box-shadow: 0 0 0 3px rgba(59, 111, 212, .18); }
+.fillform .ff-row.missing input, .fillform .ff-row.missing textarea { border-color: #e0b866; background: var(--amber-bg, #fff1d6); }
+.fillform .ff-row.bad input, .fillform .ff-row.bad textarea { border-color: var(--red, #8f2020); background: var(--red-bg, #fbe4e4); }
+.fillform .ff-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.fillform button { font: inherit; font-weight: 600; font-size: 14px; padding: 9px 16px; border-radius: 10px; cursor: pointer; }
+.fillform .ff-submit { background: #1f5fd1; color: #fff; border: 0; }
+.fillform .ff-submit:hover { background: #2a6ae0; }
+.fillform .ff-skip { background: transparent; color: var(--ink, #14202e); border: 1px solid var(--line, #e6eaef); }
+.fillform .ff-skip:hover { background: rgba(0, 0, 0, .04); }
+.fillform button:disabled { opacity: .5; cursor: default; }
+.fillform .ff-working { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--muted, #5b6776); font-size: 13px; }
+.fillform .ff-spin { width: 14px; height: 14px; border: 2px solid rgba(0, 0, 0, .15); border-top-color: #3b6fd4; border-radius: 50%;
+  animation: ff-spin .8s linear infinite; flex: none; }
+@keyframes ff-spin { to { transform: rotate(360deg); } }
+.fillform .ff-facts, .fillform .ff-roles { margin: 8px 0 0; padding-left: 20px; }
+.fillform .ff-facts li, .fillform .ff-roles li { margin: 3px 0; }
+
+html[data-theme="dark"] .fillform { background: rgba(255, 255, 255, .06); border-color: rgba(255, 255, 255, .14); }
+html[data-theme="dark"] .fillform input, html[data-theme="dark"] .fillform textarea { background: rgba(255, 255, 255, .08);
+  border-color: rgba(255, 255, 255, .18); color: var(--ink, #eaf1fa); }
+html[data-theme="dark"] .fillform .ff-row.missing input, html[data-theme="dark"] .fillform .ff-row.missing textarea { border-color: rgba(252, 213, 138, .5); }
+html[data-theme="dark"] .fillform .ff-skip:hover { background: rgba(255, 255, 255, .08); }
+html[data-theme="dark"] .fillform .ff-spin { border-color: rgba(255, 255, 255, .2); border-top-color: #8ec5ff; }

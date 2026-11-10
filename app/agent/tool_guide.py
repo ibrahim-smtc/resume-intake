@@ -1,0 +1,61 @@
+"""Tool reference catalog served at GET /api/tools for the web /tools command."""
+from typing import TypedDict
+
+from app.agent.mcp_app import mcp
+
+# Spelled out so the editor's type checker knows what an entry holds. "try" is a Python keyword, hence the function syntax.
+GuideItem = TypedDict("GuideItem", {"title": str, "tools": list[str], "writes": bool, "does": str, "try": str})
+
+
+class GuideGroup(TypedDict):
+    group: str
+    items: list[GuideItem]
+
+
+TOOL_GUIDE: list[GuideGroup] = [
+    {"group": "Taking in resumes", "items": [
+        {"title": "Take in a resume", "tools": ["process_resume"], "writes": True,
+         "does": "Drop or send a PDF or DOCX resume. I screen out files that aren't resumes, read it, create the "
+                 "candidate's profile in Questlight, show the best matching open roles and add the candidate to the top 3 "
+                 "at the Screening stage.",
+         "try": "Drop the file and press Enter"},
+        {"title": "Fill in missing details", "tools": ["provide_missing_details", "create_profile"], "writes": True,
+         "does": "If a resume lacks something Questlight requires (a job title, say), I tell you what is missing and ask. "
+                 "Answer in the chat and I complete the profile. Say \"go ahead without it\" to save it as \"Not specified\".",
+         "try": "Update Candidate DOB: 13/06/2003"},
+    ]},
+    {"group": "Job descriptions", "items": [
+        {"title": "Create a job from a JD", "tools": ["process_job_description"], "writes": True,
+         "does": "Drop a JD (PDF, DOCX, TXT or DOC) or paste its text. I read it, create the job in Questlight, start "
+                 "Questlight's matching, and put the best 3 candidates already in Questlight on it at the Screening stage. "
+                 "If the same job is already open, I ask before creating another.",
+         "try": "Drop the JD and press Enter  /  Paste the JD and say: create this job"},
+        {"title": "Fill in missing job details", "tools": ["provide_job_details", "create_job"], "writes": True,
+         "does": "If the JD doesn't say something Questlight needs (the client, the salary range, the city...), I ask. "
+                 "Answer in the chat and I create the job.",
+         "try": "Client is ICICI Bank, salary 12-18 LPA"},
+    ]},
+    {"group": "Candidates for a job", "items": [
+        {"title": "Who fits this job?", "tools": ["find_candidates_for_job"], "writes": False,
+         "does": "Give me an open job (its ID or title) and I rank the candidates already in Questlight for it and show "
+                 "the best few with scores and matching skills. People already hired or onboarding are left out. "
+                 "I can't see who is already on the job, so a suggestion may already be there.",
+         "try": "Which candidates fit JOB-020926-00005?  /  Top 5 for the QA role"},
+        {"title": "Add candidates to a job", "tools": ["add_candidates_to_job"], "writes": True,
+         "does": "After you've seen the list, tell me who to add and I put them on that job at the Screening stage in "
+                 "Questlight. I only do this when you say so.",
+         "try": "Yes, add the first two to that job"},
+    ]},
+    {"group": "One step at a time (advanced)", "items": [
+        {"title": "Match a candidate to open roles", "tools": ["match_roles"], "writes": True,
+         "does": "Ranks the best 3 open roles for a candidate who already has a profile in Questlight. For a candidate "
+                 "whose profile I just created, it also adds them to those 3 roles at the Screening stage.",
+         "try": "Match this candidate to open roles"},
+    ]},
+]
+
+
+def uncovered_tools() -> list[str]:
+    """Registered tools that have no entry in TOOL_GUIDE (should always be empty)."""
+    listed = {t for g in TOOL_GUIDE for item in g["items"] for t in item["tools"]}
+    return sorted(t.name for t in mcp._tool_manager.list_tools() if t.name not in listed)
