@@ -1,0 +1,9 @@
+# What the app needs at runtime. The lower bounds are the versions it was tested with.
+fastapi>=0.115,<1
+uvicorn>=0.30                # the ASGI server: python run.py locally, the start command in the README in production
+httpx>=0.28,<1
+python-multipart>=0.0.20     # file uploads
+python-dotenv>=1.0           # reads .env locally
+pypdf>=6                     # reads the text of a PDF
+pypdfium2>=5                 # required by masking (PDF in-place redaction)
+mcp>=1.29,<2                 # the MCP server SDK; 2.x changes its API

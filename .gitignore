@@ -1,0 +1,21 @@
+# Environment and local data
+.env
+.env.*
+!.env.example
+data/
+*.db
+
+# Virtual environments, caches, and local tools
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+tools/
+tests/
+
+# Local documentation and source materials
+sources/
+docs/notes.md
+docs/TOKEN_USAGE_PLAN.md
+docs/Questlight_Resume_Agent_Technical_Implementation.*
