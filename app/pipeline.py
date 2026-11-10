@@ -1,0 +1,310 @@
+"""Resume intake pipeline: validation, junk/JD check, parsing, Questlight profile creation, and role matching."""
+import asyncio
+from pathlib import Path
+
+from app import settings
+from app.intake import documents, junk, matching, questlight
+from app.observability import audit, tracing
+from app.parsing import service
+
+RESUME_TYPES = (".pdf", ".docx")  # what the resume parser reads
+ALLOWED_TYPES = (".pdf", ".docx", ".txt", ".doc")  # what is taken in: a TXT or DOC may turn out to be a JD (app/job_pipeline.py)
+
+# Candidate fields redacted when MASKING_ENABLED=true.
+REDACT_FIELDS = ["email", "phoneNumber", "linkedInProfile", "github", "portfolio", "dateOfBirth"]
+REDACTED = "[REDACTED]"
+NOT_CREATED = "required information is missing, so no profile was created"
+
+
+def redact(parsed: dict) -> dict:
+    if not settings.MASKING:  # masking is off: the page and the agent see the parsed data as it is
+        return parsed
+    return {k: (REDACTED if k in REDACT_FIELDS and v else v) for k, v in parsed.items()}
+
+
+def fail(run: audit.Run, step: str, error: str) -> dict:
+    run.log(step, "error", error)
+    tracing.current().fail(error)
+    return {"file": run.file, "ok": False, "error": error}
+
+
+def stopped(name: str, verdict) -> dict:
+    """The junk check ended the run (junk, a job description, or sent to the review queue): no resume is parsed. A job
+    description is then taken in by app/job_pipeline.py (the callers do that, with the same run)."""
+    return {"file": name, "ok": True, "decision": verdict.decision, "reason": verdict.reason, "redacted": None,
+            "missing_fields": [], "missing_recommended": [], "profile": None, "roles": None,
+            "masked_pdf_b64": None, "warning": None}
+
+
+def success(name: str, verdict, parsed, masked_b64, warning, missing, recommended, profile, roles=None) -> dict:
+    # Nothing is written to disk, and only the redacted JSON is returned.
+    return {"file": name, "ok": True, "decision": verdict.decision, "reason": verdict.reason, "masking": settings.MASKING,
+            "redacted": redact(parsed) if parsed else None, "missing_fields": missing,
+            "missing_recommended": recommended, "profile": profile, "roles": roles,
+            "masked_pdf_b64": masked_b64, "warning": warning}
+
+
+# ---------- the steps ----------
+
+def intake_error(ext: str, data: bytes):
+    if ext not in ALLOWED_TYPES:
+        return f"unsupported file type ({ext or 'no extension'}): send a PDF or DOCX resume (or a PDF, DOCX, TXT or DOC job description)"
+    if not data:
+        return "empty file"
+    if len(data) > settings.MAX_UPLOAD_BYTES:
+        return f"file is larger than {settings.MAX_UPLOAD_LABEL}"
+    return None
+
+
+def junk_step(run: audit.Run, name: str, ext: str, data: bytes):
+    """The intake checks and the "Junk?" block, decided locally from the file's own text before any parser call.
+    Returns (text, verdict, failure): failure is the finished error result when the file can't be read, else None."""
+    with tracing.span("intake checks"):
+        error = intake_error(ext, data)
+        if error:
+            return None, None, fail(run, "intake", error)
+    with tracing.span("junk check") as s:
+        text, has_images, read_err = documents.extract_text(data, ext)
+        if read_err:
+            return None, None, fail(run, "junk_check", read_err)
+        verdict = junk.classify(text, has_images)
+        s.set(decision=verdict.decision, words=verdict.signals["words"])
+    run.log("junk_check", verdict.decision, verdict.reason, **verdict.signals)
+    print(f"[intake] {name}: {verdict.decision} - {verdict.reason}")
+    return text, verdict, None
+
+
+async def parse_step(run: audit.Run, name: str, ext: str, data: bytes) -> dict:
+    """The parse block: Perfox's extract_structured, through app/parsing/service.py. Returns a dict with
+    parsed (the resume JSON, or None), failed (the finished error result, or None),
+    incomplete (a "name/email/phone missing" message: a real resume, but there is no JSON), and
+    masked_b64 / warning (no masked PDF is made with this parser)."""
+    out = {"parsed": None, "failed": None, "incomplete": None, "masked_b64": None, "warning": None}
+    with tracing.span("parse resume", kind="llm") as s:
+        s.set_usage(provider="perfox")
+        parsed, err = await service.parse_resume(name, data, ext)
+        if err and err.startswith(service.MISSING_MESSAGE):
+            # A real resume that lacks name/email/phone: there is no JSON to load, so the recruiter is asked for them.
+            s.set(outcome="required fields missing")
+            run.log("parse", "incomplete", err, parser=settings.PARSER)
+            out["incomplete"] = out["warning"] = err
+            return out
+        if err:
+            out["failed"] = fail(run, "parse", err)
+            return out
+    run.log("parse", "ok", "parsed with the Perfox parser", parser=settings.PARSER)
+    out["parsed"] = parsed
+    out["warning"] = "no masked PDF is made with the Perfox parser"
+    return out
+
+
+CONTACT_LINES = {"name": "Name: {}", "email": "Email: {}", "phoneNumber": "Phone: {}"}
+
+
+async def read_with_contact(run: audit.Run, name: str, ext: str, data: bytes, text: str, contact: dict) -> dict:
+    """The parser stopped because the resume shows no email or phone (say). Once the recruiter has supplied them, the resume is
+    read again from a copy with those lines added at the top (documents.with_contact), so everything else in it (skills, work
+    history, education) is read for real. Returns parse_step's dict; parsed then has the recruiter's details on top of what the
+    parser found. The copy is only sent to the parser: the profile still gets the original file attached."""
+    lines = [CONTACT_LINES[k].format(contact[k]) for k in CONTACT_LINES if contact.get(k)]
+    copy, copy_ext = documents.with_contact(data, ext, text, lines)
+    p = await parse_step(run, Path(name).with_suffix(copy_ext).name, copy_ext, copy)
+    if p["incomplete"]:  # still nothing: don't ask again for what was just given
+        p["failed"] = fail(run, "parse", "the resume still couldn't be read after the contact details were added: " + questlight.unreadable_note(p["incomplete"]))
+        p["incomplete"] = None
+    if p["parsed"]:
+        p["parsed"].update({k: v for k, v in contact.items() if v})  # what the recruiter typed wins
+    return p
+
+
+async def existing_step(run: audit.Run, email: str, text: str = "", name_check: bool = True):
+    """The "Already in Questlight?" check: GET /applicants/{email}. Returns (profile, looked_up): profile is a finished
+    "duplicate" profile when the candidate exists (nothing is created or read any further), else None; looked_up says whether
+    Questlight answered, so the same email isn't asked twice.
+    Early (name_check=True): the email comes from the document's text, before the parse, so the person must also show up
+    by name in the text, otherwise (a stray email) the resume is read as usual. Late (name_check=False): the parsed email."""
+    with tracing.span("check applicant exists") as s:
+        found = await questlight.find_by_email(email)
+        s.set(outcome=found["status"])
+        if found["status"] == "error":
+            s.fail(found["message"])
+        known = found["status"] in ("found", "not_found")
+        if found["status"] == "found" and name_check and not questlight.name_in_text(found.get("name", ""), text):
+            s.set(outcome="found, name differs")
+            run.log("check_exists", "name_differs", "a profile with this email exists, but its name is not in the resume: reading the resume as usual",
+                    record_id=found.get("applicantId"))
+            return None, False  # the parsed email is checked again after the parse
+    run.log("check_exists", found["status"], found["message"], record_id=found.get("applicantId"))
+    if found["status"] != "found":
+        return None, known
+    if found["deleted"]:  # the code is added where the message is shown (the page, profile.candidate_id)
+        message = ("a profile with this email was found in Questlight but it has been deleted there: nothing was created "
+                   "or changed, a person has to decide whether it is brought back")
+    else:
+        message = "this candidate is already in Questlight, so nothing was created or changed"
+    return {"status": "duplicate", "message": message, "applicantId": found.get("applicantId"), "id": found["id"],
+            "existing": {"name": found["name"], "candidate_status": found["candidate_status"],
+                         "has_resume": found["has_resume"], "deleted": found["deleted"]}}, known
+
+
+async def load_into_questlight(run: audit.Run, data: bytes, ext: str, parsed: dict, fill: bool = False):
+    """The "Load into Questlight" block. Returns (missing required fields, missing recommended fields, profile result).
+    The profile is created from the real parsed data; only the redacted copy ever goes back to the page.
+    Details Questlight requires but the resume lacks (a job title, say) block the profile and are listed in `missing`
+    (and as profile["missing_items"]) so they can be asked for; fill=True saves them as "Not specified" instead."""
+    with tracing.span("load into Questlight") as s:
+        checked = questlight.review(parsed, fill=fill, source=run.channel)
+        applicant, missing, adjusted = checked["applicant"], checked["missing"], checked["adjusted"]
+        recommended = questlight.missing_recommended(applicant)
+        if missing:
+            profile = {"status": "not_created", "message": NOT_CREATED, "missing_items": checked["items"]}
+        else:
+            profile = await questlight.create_profile(applicant, run.file, data, ext)
+        if adjusted:  # what Questlight's rules made us fill in or shorten, so the recruiter is told
+            profile["adjusted"] = adjusted
+        kinds = [m.split(" for ", 1)[0] for m in missing]  # the audit log and trace never hold candidate details, so no company names
+        s.set(outcome=profile["status"], missing_required=kinds, filled_in=fill)
+        if profile["status"] == "failed":
+            s.fail(profile["message"])
+    run.log("load_questlight", profile["status"], profile["message"], record_id=profile.get("applicantId"),
+            missing_required=kinds, missing_recommended=recommended)
+    return missing, recommended, profile
+
+
+async def match_open_roles(run: audit.Run, parsed: dict, text: str, profile: dict, allow_existing: bool = False):
+    """The "Match open roles" block. In the pipeline it runs only for a candidate whose profile was just created in
+    Questlight; allow_existing=True (the agent's match_roles tool, when a recruiter asks) also lets a candidate
+    whose profile already existed (a duplicate) through. A strong match ends with screen_top_roles (a new profile only)."""
+    if profile["status"] != "created" and not (allow_existing and profile["status"] == "duplicate"):
+        return None
+    with tracing.span("match open roles") as s:
+        result = await matching.match_roles(parsed, text)
+        s.set(outcome=result["status"], open_jobs=result["open_jobs"])
+        if result["status"] == "failed":
+            s.fail(result["message"])
+    run.log("match_roles", result["status"], result["message"], record_id=profile.get("applicantId"),
+            open_jobs=result["open_jobs"], top=[{"jobId": m["jobId"], "score": m["score"]} for m in result["matches"]])
+    await screen_top_roles(run, profile, result)
+    return result
+
+
+async def screen_top_roles(run: audit.Run, profile: dict, roles: dict):
+    """After matching: puts a candidate whose profile was just created on their best matching jobs (up to 3) at the Screening
+    stage in Questlight. The outcome is stored on roles["screening"] and on each match as m["screening"]. Runs only for a
+    new profile (an existing one has no ID here) and only when matching found a strong match. Safe to call again: jobs
+    already done are skipped and only the ones that failed are retried. Returns roles["screening"], or None when the
+    candidate is not a new profile or there are no matches."""
+    if profile.get("status") != "created" or not roles or not roles.get("matches"):
+        return None
+    with tracing.span("screen top roles") as s:
+        if roles["status"] != "ok":
+            roles["screening"] = {"status": "skipped", "message": "no strong match, so the candidate was not put on any job"}
+        elif not profile.get("id"):
+            roles["screening"] = {"status": "skipped", "message": "Questlight returned no ID for the new profile, so it can't be put on a job"}
+        else:
+            # A new profile starts as NEW_CANDIDATE; once one screening has raised it to SCREENING, the others needn't.
+            status = "SCREENING" if any((m.get("screening") or {}).get("status_updated") for m in roles["matches"]) else "NEW_CANDIDATE"
+            for m in roles["matches"][:matching.TOP_N]:
+                if (m.get("screening") or {}).get("status") not in ("screened", "already"):
+                    m["screening"] = await questlight.add_to_screening(profile["id"], m["id"], status)
+                    if m["screening"].get("status_updated"):
+                        status = "SCREENING"
+            done = [m for m in roles["matches"][:matching.TOP_N] if m["screening"]["status"] in ("screened", "already")]
+            titles = ", ".join(m["title"] for m in done)
+            first_error = next((m["screening"]["message"] for m in roles["matches"][:matching.TOP_N] if m["screening"]["status"] == "failed"), None)
+            if len(done) == len(roles["matches"][:matching.TOP_N]):
+                roles["screening"] = {"status": "screened", "message": f"added to the Screening stage of {len(done)} job(s): {titles}"}
+            elif done:
+                roles["screening"] = {"status": "partial", "message": f"added to the Screening stage of {titles}; the rest failed: {first_error}"}
+            else:
+                roles["screening"] = {"status": "failed", "message": f"could not add the candidate to any job: {first_error}"}
+        outcome = roles["screening"]
+        s.set(outcome=outcome["status"])
+        if outcome["status"] in ("failed", "partial"):
+            s.fail(outcome["message"])
+    run.log("screen_top_roles", outcome["status"], outcome["message"], record_id=profile.get("applicantId"),
+            jobs=[{"jobId": m["jobId"], "status": (m.get("screening") or {}).get("status")} for m in roles["matches"][:matching.TOP_N]])
+    return outcome
+
+
+# ---------- the whole run ----------
+
+async def run_pipeline(run: audit.Run, name: str, ext: str, data: bytes, state: dict | None = None) -> dict:
+    text, verdict, failure = junk_step(run, name, ext, data)
+    if failure:
+        return failure
+    assert text is not None and verdict is not None  # junk_step returns them unless it failed
+    if verdict.decision != "accepted":
+        return stopped(name, verdict)
+    if ext not in RESUME_TYPES:
+        return fail(run, "intake", f"this looks like a resume, but resumes are read from PDF or DOCX only ({ext} given): "
+                    "ask for it as a PDF or DOCX")
+
+    # Already in Questlight? The email written in the resume is looked up first (about 1 s), so a candidate who exists is
+    # answered at once, without the 20-30 s parse, the questions about missing details or the profile call.
+    asked = None  # the email Questlight has already answered for
+    emails = questlight.emails_in(text)
+    if len(emails) == 1:
+        existing, known = await existing_step(run, emails[0], text)
+        if existing:
+            if state is not None:
+                state.update(text=text, parsed=None, incomplete=None)
+            note = "found by the email in the resume, so the resume was not read"
+            return success(name, verdict, None, None, note, [], [], existing)
+        asked = emails[0] if known else None
+
+    # Reading the resume takes about 14 s; Questlight's open-jobs list (about 3 s when it is not cached) downloads meanwhile,
+    # so match_open_roles finds it ready instead of waiting for it.
+    warm_up = asyncio.create_task(matching.warm_open_jobs())
+    try:
+        p = await parse_step(run, name, ext, data)
+        if p["failed"]:
+            return p["failed"]
+        email = str((p["parsed"] or {}).get("email") or "").strip().lower()
+        if email and email != asked and questlight.EMAIL_RE.match(email):  # not found early (scanned PDF, several emails): by the parsed one
+            existing, _ = await existing_step(run, email, name_check=False)
+            if existing:
+                if state is not None:
+                    state.update(text=text, parsed=p["parsed"], incomplete=None)
+                return success(name, verdict, p["parsed"], p["masked_b64"], p["warning"], [], [], existing)
+        if state is not None:
+            state.update(text=text, parsed=p["parsed"], incomplete=p["incomplete"])
+        if p["incomplete"]:
+            profile = {"status": "not_created", "message": NOT_CREATED, "missing_items": questlight.unreadable_items(p["incomplete"])}
+            run.log("load_questlight", profile["status"], profile["message"])
+            return success(name, verdict, None, None, questlight.unreadable_note(p["incomplete"]), ["see note"], [], profile)
+        missing, recommended, profile = await load_into_questlight(run, data, ext, p["parsed"])
+        roles = await match_open_roles(run, p["parsed"], text, profile)
+        return success(name, verdict, p["parsed"], p["masked_b64"], p["warning"], missing, recommended, profile, roles)
+    finally:
+        warm_up.cancel()  # does nothing once it has finished
+
+
+async def process_file(name: str, data: bytes, channel: str = audit.CHANNEL, state: dict | None = None) -> dict:
+    """Runs one file through the whole pipeline. Used by the upload page and by the Perfox agent's MCP tool.
+    One file = one trace: every step runs in a span that records its time and, for LLM calls, tokens.
+    state (optional): a dict this fills with the run, the resume text and the parsed JSON, so the agent's tools can go
+    on with the same file (supplying a missing detail, then creating the profile). It never leaves the server."""
+    ext = Path(name).suffix.lower()
+    run = audit.Run(name, data, channel)
+    if state is not None:
+        state["run"] = run
+    trace = tracing.Trace(run.run_id)
+    try:
+        with trace.span("resume intake", kind="chain") as root:
+            root.set(parser=settings.PARSER, channel=channel, file_type=ext or "none", size_kb=round(len(data) / 1024, 1))
+            result = await run_pipeline(run, name, ext, data, state)
+            if not result["ok"]:
+                root.fail(result["error"])
+    finally:
+        trace.save()
+    if result.get("decision") == "job_description":  # a JD, not a resume: the JD intake takes it over, in the same run
+        from app import job_pipeline
+        if state is not None:
+            state.clear()
+        jd = await job_pipeline.process_jd(name, data, channel=channel, state=state, run=run)
+        jd["resume_check_trace"] = trace.summary()
+        return jd
+    result["parser"] = settings.PARSER
+    result["trace"] = trace.summary()
+    return result
