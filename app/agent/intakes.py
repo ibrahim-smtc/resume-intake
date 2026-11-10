@@ -1,0 +1,137 @@
+"""In-memory short-term intake store (30-minute TTL, max 20 entries per process)."""
+import asyncio
+import hashlib
+import secrets
+import time
+from collections import OrderedDict
+from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+from app.agent import chat_bridge
+from app.observability import audit
+
+TTL_S = 30 * 60
+MAX_FILES = 20
+
+_intakes: "OrderedDict[str, Intake]" = OrderedDict()
+_by_upload: dict = {}  # upload token (from the intake-file link) -> intake id
+_by_form: dict = {}    # fill-in form token (the private /fill/<token> link) -> intake id
+
+
+class Intake:
+    """One file (or pasted JD) the agent is working on. kind "resume": parsed/profile/roles hold its state; kind "jd": a job
+    description, with details (what the job is built from) and job (the last outcome of creating it)."""
+
+    def __init__(self, run: audit.Run, name: str, ext: str, data: bytes, text: str, kind: str = "resume"):
+        self.id = run.run_id
+        self.run, self.name, self.ext, self.data, self.text, self.kind = run, name, ext, data, text, kind
+        self.born = time.monotonic()
+        self.parsed = self.incomplete = self.profile = self.roles = None
+        self.contact: dict = {}  # name/email/phoneNumber the recruiter gave for a resume the parser stopped on (nothing was read yet)
+        self.details: dict | None = None
+        self.job: dict | None = None
+        self.parse_done = False
+        self.upload = None  # the token of the intake-file link this file came in with (chat uploads), if any
+        self.notify_phone = ""  # the recruiter's WhatsApp number Perfox forwarded with the call (app/agent/notify.py); never logged
+        self.notified = False   # the outcome of a fill-in form has been sent to that number
+        self.form_token = None  # the token of this file's fill-in form link, once one was handed out (app/agent/forms.py)
+        # The agent and the fill-in form can act on one file at the same moment: `lock` lets one step that writes to Questlight
+        # (create_profile, match_roles) run at a time, `form_lock` one form submit at a time (a double click).
+        self.lock = asyncio.Lock()
+        self.form_lock = asyncio.Lock()
+
+
+def file_key(file_url) -> str:
+    """The same file, however it is signed: Perfox hands out a new signed link (X-Amz-... in the query) each time the agent asks for
+    an attachment, so two calls about one file differ only in their signature. Everything else in the link stays."""
+    parts = urlsplit(str(file_url or "").strip())
+    keep = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+            if not k.lower().startswith("x-amz-") and k.lower() not in ("x-id", "response-content-disposition")]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(keep), ""))
+
+
+def remember(intake: Intake) -> None:
+    now = time.monotonic()
+    for key in [k for k, v in _intakes.items() if now - v.born > TTL_S]:
+        del _intakes[key]
+    _intakes[intake.id] = intake
+    while len(_intakes) > MAX_FILES:
+        _intakes.popitem(last=False)
+    if intake.upload:
+        _by_upload[intake.upload] = intake.id
+    for token in [t for t, i in _by_upload.items() if i not in _intakes]:  # forget links to files that are gone
+        del _by_upload[token]
+    for token in [t for t, i in _by_form.items() if i not in _intakes]:    # and the forms of files that are gone
+        del _by_form[token]
+
+
+def form_token(intake: Intake) -> str:
+    """The private token of this file's fill-in form, made the first time it is asked for. It is the only key to the form
+    (the link opens without the app's password), so it is long and random, and it dies with the file (30 minutes)."""
+    if not intake.form_token:
+        intake.form_token = secrets.token_urlsafe(24)
+        _by_form[intake.form_token] = intake.id
+    return intake.form_token
+
+
+def find_by_form(token):
+    """The live intake behind a fill-in form token, else None (unknown, or the file has expired)."""
+    intake = _intakes.get(_by_form.get(str(token or "").strip(), ""))
+    return intake if intake and time.monotonic() - intake.born <= TTL_S else None
+
+
+def find(ref):
+    """The live intake for a reference (file_id, intake-file link, or its token), else None."""
+    ref = str(ref or "").strip()
+    intake = _intakes.get(ref)
+    if not intake:
+        token = chat_bridge.token_of(ref)
+        intake = _intakes.get(_by_upload.get(token)) if token else None
+    if not intake and ref.startswith("https://"):  # an ordinary link: the same file, whatever its signature
+        intake = _intakes.get(_by_upload.get(file_key(ref)))
+    return intake if intake and time.monotonic() - intake.born <= TTL_S else None
+
+
+def lookup(ref):
+    """Returns (intake, error). A reference that matches nothing gets a message the agent can act on."""
+    intake = find(ref)
+    if intake:
+        return intake, None
+    return None, ("no file found for that reference. file_id is the one in the process_resume result; if you no longer "
+                  "have it, pass the attachment's file_url instead. Files are kept for 30 minutes: if it has expired, call "
+                  "process_resume again with the attachment's file_url")
+
+
+def keep_for_follow_up(state: dict, name: str, data: bytes, result: dict, upload=None):
+    """Keeps a parsed resume (whatever happened to its profile) so that the next tool calls, even in a later turn of the
+    chat, can continue with the same file: supply a missing detail, retry, match roles. Junk and unreadable files have
+    nothing to follow up. `state` is what pipeline.process_file filled in."""
+    status = (result.get("profile") or {}).get("status")
+    if "run" not in state or "parsed" not in state or not status:
+        return None
+    intake = Intake(state["run"], name, Path(name).suffix.lower(), data, state.get("text", ""))
+    intake.parse_done, intake.parsed, intake.incomplete, intake.profile = True, state["parsed"], state.get("incomplete"), result["profile"]
+    intake.roles, intake.upload = result.get("roles"), upload
+    remember(intake)
+    return intake
+
+
+def pasted_token(text: str) -> str:
+    """A stable 24-character token for pasted JD text, so the same paste is recognised like the same attachment."""
+    return hashlib.sha256(" ".join(str(text or "").split()).lower().encode("utf-8")).hexdigest()[:24]
+
+
+def content_token(data: bytes) -> str:
+    """The same for a file that came as an ordinary https link (no intake-file token): its content identifies it."""
+    return hashlib.sha256(data).hexdigest()[:24]
+
+
+def keep_jd_for_follow_up(state: dict, name: str, data: bytes, result: dict, upload=None):
+    """Keeps a job description the JD intake read (whatever happened to the job) so the next tool calls can go on with it:
+    supply what was missing, then create the job. Returns the intake, or None when there is nothing to follow up."""
+    if "run" not in state or "details" not in state:
+        return None
+    intake = Intake(state["run"], name, state.get("ext", ".txt"), data, state.get("text", ""), kind="jd")
+    intake.parse_done, intake.details, intake.job, intake.upload = True, state["details"], result.get("job"), upload
+    remember(intake)
+    return intake
