@@ -15,7 +15,7 @@ tools (`POST /mcp`), which run the same pipelines as the upload page: a resume b
 
 Perfox must be able to open `https://<host>/mcp`. Two ways:
 
-- **Deployed (Vercel):** the URL is `https://<your-project>.vercel.app/mcp`. See "Deploying to Vercel" in the README.
+- **Deployed:** the URL is `https://<your-host>/mcp` (on Vercel, `https://<your-project>.vercel.app/mcp`). See "Deploying to a company cloud or container" and "Vercel Deployment" in the README.
 - **On your machine, for development:** run the app and a Cloudflare quick tunnel in two terminals.
 
   ```
@@ -152,7 +152,7 @@ Greeting: leave it **empty**. The app's page shows its own welcome line, and Per
 The page posts to this app's `/api/chat`, which forwards the message to the agent's webhook with a secret and returns the agent's
 reply (an authenticated webhook answers with `response_text`). The file stays on this server: the message only carries a
 private `intake-file://...` link that the MCP server opens. The page waits up to 280 s for the reply (a JD can take two
-minutes); on Vercel the function limit is 300 s.
+minutes); whatever sits in front of the app (an ingress, a load balancer, Vercel's function limit of 300 s) must allow at least 300 s.
 
 In Studio, on the agent canvas, add a **Webhook** trigger, wire it into the AI Agent node, and set:
 
@@ -167,7 +167,7 @@ In Studio, on the agent canvas, add a **Webhook** trigger, wire it into the AI A
 | Report as channel | Web |
 | Attachment URL | leave **empty** (Perfox would try to download our private link) |
 
-Copy the trigger's **Full URL** and its **Auth Secret** into your settings (`.env` locally, Environment Variables on Vercel):
+Copy the trigger's **Full URL** and its **Auth Secret** into your settings (`.env` locally, the environment variables of the deployment otherwise):
 
 ```
 PERFOX_WEBHOOK_URL=<the Full URL>
@@ -184,15 +184,15 @@ The Auth Secret is shown in plain text by Perfox's API, so treat it as shown: ge
 On WhatsApp the recruiter gets the fill-in form as a link and submits it on our page, where the agent can't see it. To have the
 result arrive on WhatsApp too, our server sends it through Perfox after the form creates the profile:
 
-1. In Vercel add `PERFOX_WHATSAPP_FROM=<the number of the agent's WhatsApp trigger>` (E.164, e.g. +918065492151) and redeploy.
+1. Add `PERFOX_WHATSAPP_FROM=<the number of the agent's WhatsApp trigger>` (E.164 format, with the country code) to the environment and redeploy.
    Without it nothing is sent and nothing else changes.
 2. The message is sent with `PERFOX_API_KEY`, so that key needs the `conversations:write` scope next to `documents:extract` (scopes
-   are chosen when a key is generated; generate one with both and replace it in Vercel if yours lacks it). Without the scope Perfox
+   are chosen when a key is generated; generate one with both and replace it in the environment if yours lacks it). Without the scope Perfox
    answers 403, nothing is sent and the audit log says `failed`. To keep sending apart from reading (a leaked key that can send could
    message people from the business number), generate a second key with only `conversations:write` and set it as
    `PERFOX_MESSAGING_KEY`; it is then used instead.
 3. The recruiter's number comes from Perfox, which forwards it as the `X-Sa-End-User-Phone` header on every tool call. The
-   Vercel logs show a line `[mcp] end-user headers from Perfox: ...` (names only) so you can confirm it arrives.
+   application logs show a line `[mcp] end-user headers from Perfox: ...` (names only) so you can confirm it arrives.
 
 The message is an ordinary text: the candidate's name and Questlight code, and the jobs they were screened for. It is deliverable
 because the recruiter has just messaged the agent (WhatsApp's 24-hour window). It is sent once per file, and a refusal or a timeout
@@ -227,6 +227,6 @@ click Rediscover on the integration so the agent sees it.)
 ## Keeping it working
 
 - **Questlight token:** it lasts 10 days. When profiles stop being created ("Questlight rejected the token"), paste a new one
-  into `QUESTLIGHT_TOKEN` and restart (Vercel: update the variable, then redeploy).
+  into `QUESTLIGHT_TOKEN` and restart (the variable only takes effect on a new deployment or restart).
 - **A changed tool description:** click Rediscover on the integration.
-- **A new tunnel URL:** update the integration's URL (not needed on Vercel).
+- **A new tunnel URL:** update the integration's URL (not needed on a deployed host).
