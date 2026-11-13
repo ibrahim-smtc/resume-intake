@@ -1,4 +1,6 @@
 """FastAPI entrypoint serving the web UI, JSON APIs, and the /mcp server."""
+import asyncio
+import contextlib
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -11,8 +13,27 @@ from app.observability import audit, tracing
 from app.parsing.router import router as parsing_router
 from app.security import AccessGuard
 
+def _prepare_mongodb() -> None:
+    try:
+        audit.ensure_schema()
+    except audit.STORE_ERRORS as exc:  # not fatal: it is tried again on the first write
+        print(f"[audit] WARNING: couldn't reach MongoDB at startup ({audit.short(exc)})")
+
+
+@contextlib.asynccontextmanager
+async def lifespan(_app):
+    """Creates the MongoDB collections and indexes in the background (so a MongoDB that is down never delays startup), then runs
+    the MCP session manager."""
+    setup = asyncio.create_task(asyncio.to_thread(_prepare_mongodb))
+    try:
+        async with mcp_app.lifespan(_app):
+            yield
+    finally:
+        await setup
+
+
 # No auto-generated /docs, /redoc or /openapi.json: nothing needs them, and this app may face the internet.
-app = FastAPI(title="Resume intake", lifespan=mcp_app.lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Resume intake", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(AccessGuard)
 app.include_router(parsing_router)
 app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
