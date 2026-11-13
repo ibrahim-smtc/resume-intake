@@ -1,38 +1,24 @@
-"""SQLite execution span tracing for intake stages and token usage."""
-import json
-import sqlite3
+"""MongoDB execution span tracing for intake stages, plus the Perfox token usage of the LLM steps."""
 import time
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 
+from pymongo.errors import ConnectionFailure, DuplicateKeyError
+
+from app import settings
 from app.observability import audit
 
 KINDS = {"chain", "tool", "llm"}  # LangSmith run types: chain = a group of steps, tool = code or an API call
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS trace_spans (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    trace_id      TEXT NOT NULL,   -- = audit_log.run_id
-    span_id       TEXT NOT NULL,
-    parent_id     TEXT,            -- NULL for the root span of the trace
-    seq           INTEGER NOT NULL, -- order the spans started in
-    name          TEXT NOT NULL,
-    kind          TEXT NOT NULL,   -- chain | tool | llm
-    start_ts      TEXT NOT NULL,   -- UTC, ISO 8601
-    offset_ms     REAL NOT NULL,   -- start, counted from the start of the trace
-    duration_ms   REAL,
-    status        TEXT NOT NULL,   -- ok | error
-    error         TEXT,
-    provider      TEXT,            -- for llm spans: perfox, questlight...
-    model         TEXT,            -- only when the provider reports it
-    input_tokens  INTEGER,
-    output_tokens INTEGER,
-    details       TEXT             -- small JSON of facts about the step. Never candidate data
-);
-CREATE INDEX IF NOT EXISTS trace_spans_trace_id ON trace_spans (trace_id, seq);
-"""
+# Collections (names in settings.py; indexes are created in audit.db()):
+#   trace_spans: one document per step of a run: trace_id (= audit run_id), span_id, parent_id (None for the root span),
+#     seq (order the spans started in), name, kind (chain | tool | llm), start_ts (UTC, ISO 8601), offset_ms (from the start
+#     of the trace), duration_ms, status (ok | error), error, provider (for llm spans: perfox...), model (only when the
+#     provider reports it), input_tokens, output_tokens, details (small facts about the step. Never candidate data).
+#   llm_perfox_usage_events: one document per LLM step (see _record_usage).
+#   llm_perfox_usage_daily: the usage rolled up per day, provider and model.
 
 _current: ContextVar = ContextVar("current_span", default=None)
 
@@ -118,9 +104,9 @@ class Trace:
                 "spans": [s.to_dict() for s in self.spans]}
 
     def save(self) -> None:
-        """Writes the spans to the audit database. Never raises: a broken trace store must not fail the upload, but it
-        says so loudly. Also prints one [timing] line, so the run's timings can be read in the host's logs (on Vercel the
-        database itself is lost when an instance restarts)."""
+        """Writes the spans, and the Perfox usage of the LLM steps, to MongoDB. Never raises: a broken trace store must not fail
+        the upload, but it says so loudly. Also prints one [timing] line, so the run's timings can be read in the host's logs
+        too."""
         if not self.spans:
             return
         try:
@@ -128,18 +114,49 @@ class Trace:
         except Exception:  # a timing line must never fail the run either
             pass
         try:
-            conn = _connect()
-            with conn:
-                conn.executemany(
-                    "INSERT INTO trace_spans (trace_id, span_id, parent_id, seq, name, kind, start_ts, offset_ms, duration_ms,"
-                    " status, error, provider, model, input_tokens, output_tokens, details)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    [(self.id, s.id, s.parent_id, s.seq, s.name, s.kind, s.started.isoformat(timespec="milliseconds"),
-                      s.offset_ms, s.duration_ms, s.status, s.error, s.provider, s.model, s.input_tokens, s.output_tokens,
-                      json.dumps(s.details, default=str) if s.details else None) for s in self.spans])
-            conn.close()
-        except (sqlite3.Error, OSError) as exc:
-            print(f"[trace] WARNING: couldn't save the trace ({exc})")
+            database = audit.db()
+            database[settings.TRACE_COLLECTION].insert_many(
+                [{"trace_id": self.id, "span_id": s.id, "parent_id": s.parent_id, "seq": s.seq, "name": s.name, "kind": s.kind,
+                  "start_ts": s.started.isoformat(timespec="milliseconds"), "offset_ms": s.offset_ms,
+                  "duration_ms": s.duration_ms, "status": s.status, "error": s.error, "provider": s.provider, "model": s.model,
+                  "input_tokens": s.input_tokens, "output_tokens": s.output_tokens, "details": audit.plain(s.details)}
+                 for s in self.spans], ordered=False)
+        except audit.STORE_ERRORS as exc:
+            print(f"[trace] WARNING: couldn't save the trace ({audit.short(exc)})")
+            if isinstance(exc, ConnectionFailure):
+                return  # MongoDB can't be reached: the usage write would only wait for it as well
+        try:
+            _record_usage(audit.db(), self)
+        except audit.STORE_ERRORS as exc:
+            print(f"[usage] WARNING: couldn't record the Perfox usage ({audit.short(exc)})")
+
+
+def _record_usage(database, trace) -> None:
+    """The Perfox usage of a run: one event per LLM step, and the day's totals. The event goes in first (a trace and step can be
+    counted only once), and the totals grow only when that insert worked, so saving a trace twice can't count it twice.
+    Tokens are null when Perfox didn't report them: such a call is counted in calls_without_usage, not as zero tokens."""
+    events = database[settings.USAGE_EVENTS_COLLECTION]
+    daily = database[settings.USAGE_DAILY_COLLECTION]
+    channel = trace.spans[0].details.get("channel")
+    for s in trace.spans:
+        if s.kind != "llm":
+            continue
+        reported = s.input_tokens is not None or s.output_tokens is not None
+        provider, model = s.provider or "perfox", s.model or "unreported"
+        day = s.started.astimezone(timezone.utc).strftime("%Y-%m-%d")
+        tokens_in, tokens_out = s.input_tokens or 0, s.output_tokens or 0
+        try:
+            events.insert_one({"ts": s.started, "day": day, "trace_id": trace.id, "span_id": s.id, "step": s.name,
+                               "provider": provider, "model": model, "input_tokens": s.input_tokens, "output_tokens": s.output_tokens,
+                               "total_tokens": tokens_in + tokens_out if reported else None, "usage_reported": reported,
+                               "duration_ms": s.duration_ms, "status": s.status, "error": s.error, "channel": channel})
+        except DuplicateKeyError:
+            continue
+        daily.update_one({"day": day, "provider": provider, "model": model},
+                         {"$inc": {"calls": 1, "calls_without_usage": 0 if reported else 1, "errors": 1 if s.status == "error" else 0,
+                                   "input_tokens": tokens_in, "output_tokens": tokens_out, "total_tokens": tokens_in + tokens_out,
+                                   "duration_ms_total": s.duration_ms or 0},
+                          "$set": {"updated_at": datetime.now(timezone.utc)}}, upsert=True)
 
 
 # ---------- where the time went ----------
@@ -207,58 +224,54 @@ def record_usage(input_tokens=None, output_tokens=None, provider=None, model=Non
 
 # ---------- reading traces back ----------
 
-def _connect() -> sqlite3.Connection:
-    conn = audit.open_db()
-    conn.executescript(SCHEMA)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _row(r) -> dict:
-    d = dict(r)
-    d["details"] = json.loads(d["details"]) if d["details"] else {}
+def _row(doc: dict) -> dict:
+    d = dict(doc)
+    d.pop("_id", None)
+    d["id"] = d["span_id"]   # parent_id points at a span_id, so the viewer can only nest the steps with this as the id
+    d["details"] = d.get("details") or {}
     return d
 
 
 def get_trace(trace_id: str):
-    conn = _connect()
-    rows = [_row(r) for r in conn.execute("SELECT * FROM trace_spans WHERE trace_id = ? ORDER BY seq", (trace_id,))]
-    # A trace id is the audit run id (12 characters), plus "-<tool>" for a single step called by the agent
-    file = conn.execute("SELECT file FROM audit_log WHERE run_id = ? LIMIT 1", (trace_id[:12],)).fetchone() if _has_audit(conn) else None
-    conn.close()
+    database = audit.db()
+    rows = [_row(d) for d in database[settings.TRACE_COLLECTION].find({"trace_id": trace_id}).sort("seq", 1)]
     if not rows:
         return None
+    # A trace id is the audit run id (12 characters), plus "-<tool>" for a single step called by the agent
+    logged = database[settings.AUDIT_COLLECTION].find_one({"run_id": trace_id[:12]})
     root = rows[0]
-    return {"trace_id": trace_id, "file": file["file"] if file else None, "start_ts": root["start_ts"],
+    return {"trace_id": trace_id, "file": logged["file"] if logged else None, "start_ts": root["start_ts"],
             "total_ms": root["duration_ms"], "status": "error" if any(r["status"] == "error" for r in rows) else "ok",
             "input_tokens": sum(r["input_tokens"] or 0 for r in rows), "output_tokens": sum(r["output_tokens"] or 0 for r in rows),
             "llm_calls": sum(1 for r in rows if r["kind"] == "llm"), "spans": rows}
 
 
-def _has_audit(conn) -> bool:
-    return bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log'").fetchone())
-
-
 def recent_traces(limit: int = 100) -> list:
-    conn = _connect()
-    rows = conn.execute(
-        "SELECT r.trace_id, r.start_ts, r.duration_ms AS total_ms,"
-        " (SELECT SUM(COALESCE(input_tokens,0)) FROM trace_spans s WHERE s.trace_id = r.trace_id) AS input_tokens,"
-        " (SELECT SUM(COALESCE(output_tokens,0)) FROM trace_spans s WHERE s.trace_id = r.trace_id) AS output_tokens,"
-        " (SELECT COUNT(*) FROM trace_spans s WHERE s.trace_id = r.trace_id AND s.status = 'error') AS errors"
-        + (", (SELECT file FROM audit_log a WHERE a.run_id = substr(r.trace_id, 1, 12) LIMIT 1) AS file" if _has_audit(conn) else ", NULL AS file")
-        + " FROM trace_spans r WHERE r.parent_id IS NULL ORDER BY r.id DESC LIMIT ?", (limit,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    database = audit.db()
+    spans = database[settings.TRACE_COLLECTION]
+    roots = list(spans.find({"parent_id": None}).sort("_id", -1).limit(limit))
+    ids = [r["trace_id"] for r in roots]
+    totals = {g["_id"]: g for g in spans.aggregate([
+        {"$match": {"trace_id": {"$in": ids}}},
+        {"$group": {"_id": "$trace_id", "input_tokens": {"$sum": {"$ifNull": ["$input_tokens", 0]}},
+                    "output_tokens": {"$sum": {"$ifNull": ["$output_tokens", 0]}},
+                    "errors": {"$sum": {"$cond": [{"$eq": ["$status", "error"]}, 1, 0]}}}}])}
+    files = {}
+    for a in database[settings.AUDIT_COLLECTION].find({"run_id": {"$in": list({i[:12] for i in ids})}}).sort("_id", 1):
+        files.setdefault(a["run_id"], a["file"])
+    return [{"trace_id": r["trace_id"], "start_ts": r["start_ts"], "total_ms": r["duration_ms"],
+             "input_tokens": totals[r["trace_id"]]["input_tokens"], "output_tokens": totals[r["trace_id"]]["output_tokens"],
+             "errors": totals[r["trace_id"]]["errors"], "file": files.get(r["trace_id"][:12])} for r in roots]
 
 
 def step_stats() -> list:
     """Per step name: how often it ran, its average and slowest time, and the tokens it used in total."""
-    conn = _connect()
-    rows = conn.execute(
-        "SELECT name, kind, COUNT(*) AS runs, AVG(duration_ms) AS avg_ms, MAX(duration_ms) AS max_ms,"
-        " SUM(COALESCE(input_tokens,0)) AS input_tokens, SUM(COALESCE(output_tokens,0)) AS output_tokens,"
-        " SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors, MIN(seq) AS first_seq"
-        " FROM trace_spans GROUP BY name, kind ORDER BY first_seq, name").fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    groups = audit.db()[settings.TRACE_COLLECTION].aggregate([
+        {"$group": {"_id": {"name": "$name", "kind": "$kind"}, "runs": {"$sum": 1}, "avg_ms": {"$avg": "$duration_ms"},
+                    "max_ms": {"$max": "$duration_ms"}, "input_tokens": {"$sum": {"$ifNull": ["$input_tokens", 0]}},
+                    "output_tokens": {"$sum": {"$ifNull": ["$output_tokens", 0]}},
+                    "errors": {"$sum": {"$cond": [{"$eq": ["$status", "error"]}, 1, 0]}}, "first_seq": {"$min": "$seq"}}},
+        {"$sort": {"first_seq": 1, "_id.name": 1}}])
+    return [{"name": g["_id"]["name"], "kind": g["_id"]["kind"], "runs": g["runs"], "avg_ms": g["avg_ms"], "max_ms": g["max_ms"],
+             "input_tokens": g["input_tokens"], "output_tokens": g["output_tokens"], "errors": g["errors"],
+             "first_seq": g["first_seq"]} for g in groups]

@@ -1,51 +1,73 @@
-"""Append-only SQLite audit log storing upload decisions without candidate PII."""
+"""Append-only MongoDB audit log storing upload decisions without candidate PII.
+
+MongoDB also holds the step traces (tracing.py) and the Perfox token usage. All of it is configured by MONGODB_URI (see
+settings.py), so a bigger deployment (replica set, Atlas, credentials, TLS, pool size, timeouts) is a change of that string."""
 import hashlib
 import json
 import os
-import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
+
+from bson.errors import BSONError
+from pymongo import ASCENDING, MongoClient
+from pymongo.errors import ConfigurationError, PyMongoError
 
 from app import settings
 
 CHANNEL = "manual upload"
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS audit_log (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts        TEXT NOT NULL,   -- UTC, ISO 8601
-    run_id    TEXT NOT NULL,   -- ties together the steps of one upload
-    channel   TEXT NOT NULL,
-    file      TEXT,
-    file_hash TEXT,            -- sha256 of the file
-    step      TEXT NOT NULL,   -- intake | junk_check | parse | load_questlight
-    decision  TEXT NOT NULL,
-    reason    TEXT,
-    record_id TEXT,            -- Questlight applicant ID (CAN-...), once there is one
-    details   TEXT             -- small JSON: rule signals, missing field names. Never candidate data
-);
-CREATE INDEX IF NOT EXISTS audit_log_run_id ON audit_log (run_id);
-"""
+# What a failed write can raise: the server is unreachable or rejects it, the document can't be encoded, or a setting is wrong.
+STORE_ERRORS = (PyMongoError, BSONError, OSError)
+
+_lock = threading.Lock()
+_clients: dict = {}   # one pooled, thread-safe MongoClient per connection string
+_ready: set = set()   # (connection string, database) pairs whose collections and indexes exist
 
 
-def db_path() -> Path:
-    """The SQLite file: AUDIT_DB, else data/audit.db (or /tmp/audit.db on Vercel). The step traces (tracing.py) live in
-    the same file. Evaluated on each call to support dynamic overrides."""
-    return Path(os.getenv("AUDIT_DB") or settings.DEFAULT_AUDIT_DB)
+def short(exc: Exception) -> str:
+    """An error for a log line: cut short, and never the connection string (it can hold a password)."""
+    return f"{type(exc).__name__}: {str(exc)[:200]}"
 
 
-def open_db() -> sqlite3.Connection:
-    """A connection to the file, creating its folder first (a fresh checkout or a new Vercel instance has none)."""
-    path = db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(path, timeout=5)
+def db():
+    """The database, with its collections and indexes created on first use. MONGODB_URI and MONGODB_DB are read on each call, so
+    a test or a deployment can switch them. Raises when MongoDB can't be reached: callers that must not fail catch STORE_ERRORS."""
+    uri = os.getenv("MONGODB_URI") or settings.MONGODB_URI
+    name = (os.getenv("MONGODB_DB") or settings.MONGODB_DB).strip()
+    with _lock:
+        client = _clients.get(uri)
+        if client is None:
+            try:
+                client = _clients[uri] = MongoClient(uri, appname="questlight-resume-intake")  # connects lazily, on the first operation
+            except ValueError:  # some malformed strings (a bad port, say) come out of the driver as a plain ValueError
+                raise ConfigurationError("MONGODB_URI is not a valid connection string") from None  # its text may hold a password
+    database = client[name] if name else client.get_default_database(default=settings.DEFAULT_MONGODB_DB)
+    key = (uri, database.name)
+    if key not in _ready:
+        _create_indexes(database)
+        _ready.add(key)  # only after it worked, so a MongoDB that was down is tried again
+    return database
 
 
-def _connect() -> sqlite3.Connection:
-    conn = open_db()
-    conn.executescript(SCHEMA)
-    return conn
+def _create_indexes(database) -> None:
+    database[settings.AUDIT_COLLECTION].create_index("run_id")
+    database[settings.AUDIT_COLLECTION].create_index("ts")
+    database[settings.TRACE_COLLECTION].create_index([("trace_id", ASCENDING), ("seq", ASCENDING)])
+    database[settings.TRACE_COLLECTION].create_index("parent_id")
+    database[settings.USAGE_EVENTS_COLLECTION].create_index([("trace_id", ASCENDING), ("span_id", ASCENDING)], unique=True)
+    database[settings.USAGE_EVENTS_COLLECTION].create_index("ts")
+    database[settings.USAGE_DAILY_COLLECTION].create_index([("day", ASCENDING), ("provider", ASCENDING), ("model", ASCENDING)], unique=True)
+
+
+def ensure_schema() -> None:
+    """Creates the collections and indexes now (at startup), so they exist before the first upload."""
+    db()
+
+
+def plain(value):
+    """A copy of a dict of facts that MongoDB can store: JSON types only (anything else becomes its text), None when empty."""
+    return json.loads(json.dumps(value, default=str)) if value else None
 
 
 class Run:
@@ -60,68 +82,67 @@ class Run:
     def log(self, step: str, decision: str, reason: str = "", record_id: str | None = None, **details) -> None:
         # A broken log must not stop intake, but it must be loud: a silent gap would make the reports wrong.
         try:
-            conn = _connect()
-            with conn:
-                conn.execute(
-                    "INSERT INTO audit_log (ts, run_id, channel, file, file_hash, step, decision, reason, record_id, details)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (datetime.now(timezone.utc).isoformat(timespec="seconds"), self.run_id, self.channel, self.file,
-                     self.file_hash, step, decision, reason, record_id,
-                     json.dumps(details, default=str) if details else None))
-            conn.close()
-        except (sqlite3.Error, OSError) as exc:  # OSError: the folder can't be created or the disk is read-only
-            print(f"[audit] WARNING: couldn't write to the audit log ({exc})")
+            db()[settings.AUDIT_COLLECTION].insert_one({
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # UTC, ISO 8601
+                "run_id": self.run_id,      # ties together the steps of one upload
+                "channel": self.channel,
+                "file": self.file,
+                "file_hash": self.file_hash,  # sha256 of the file
+                "step": step,               # intake | junk_check | parse | load_questlight ...
+                "decision": decision,
+                "reason": reason,
+                "record_id": record_id,     # Questlight applicant ID (CAN-...), once there is one
+                "details": plain(details)})  # small facts: rule signals, missing field names. Never candidate data
+        except STORE_ERRORS as exc:
+            print(f"[audit] WARNING: couldn't write to the audit log ({short(exc)})")
+
+
+def _row(doc: dict) -> dict:
+    row = dict(doc)
+    row["id"] = str(row.pop("_id"))
+    return row
 
 
 def recent(limit: int = 200) -> list:
-    conn = _connect()
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    conn.close()
-    out = []
-    for r in rows:
-        row = dict(r)
-        row["details"] = json.loads(row["details"]) if row["details"] else None
-        out.append(row)
-    return out
+    return [_row(d) for d in db()[settings.AUDIT_COLLECTION].find().sort("_id", -1).limit(limit)]
 
 
 def summary(since: str | None = None) -> dict:
     """Counts per step and decision, e.g. {"junk_check": {"junk": 3, "accepted": 10, "needs_review": 1}}.
     since: an ISO 8601 UTC timestamp; only rows at or after it are counted."""
-    conn = _connect()
     out = {}
-    for step, decision, n in conn.execute("SELECT step, decision, COUNT(*) FROM audit_log WHERE ts >= ?"
-                                          " GROUP BY step, decision", (since or "",)):
-        out.setdefault(step, {})[decision] = n
-    conn.close()
+    for g in db()[settings.AUDIT_COLLECTION].aggregate([
+            {"$match": {"ts": {"$gte": since or ""}}},
+            {"$group": {"_id": {"step": "$step", "decision": "$decision"}, "n": {"$sum": 1}}},
+            {"$sort": {"_id.step": 1, "_id.decision": 1}}]):
+        out.setdefault(g["_id"]["step"], {})[g["_id"]["decision"]] = g["n"]
     return out
 
 
 # Steps of runs that start from a job, not from a file (the agent finding candidates for a job, or adding them to it).
 # Such a run is not "a file that came in", so it is left out of the file counts below.
 JOB_STEPS = ("find_candidates", "add_to_screening")
-_NOT_JOB = "step NOT IN ('find_candidates', 'add_to_screening')"
 
 
 def run_count(since: str | None = None) -> int:
     """How many files came in (one run per file)."""
-    conn = _connect()
-    n = conn.execute(f"SELECT COUNT(DISTINCT run_id) FROM audit_log WHERE ts >= ? AND {_NOT_JOB}", (since or "",)).fetchone()[0]
-    conn.close()
-    return n
+    counted = list(db()[settings.AUDIT_COLLECTION].aggregate([
+        {"$match": {"ts": {"$gte": since or ""}, "step": {"$nin": list(JOB_STEPS)}}},
+        {"$group": {"_id": "$run_id"}},
+        {"$count": "n"}]))
+    return counted[0]["n"] if counted else 0
 
 
 def recent_runs(limit: int = 10) -> list:
     """The latest runs, newest first, one entry per file: when, which file, and each step's decision."""
-    conn = _connect()
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        f"SELECT * FROM audit_log WHERE run_id IN (SELECT run_id FROM audit_log WHERE {_NOT_JOB} GROUP BY run_id"
-        " ORDER BY MAX(id) DESC LIMIT ?) ORDER BY id", (limit,)).fetchall()
-    conn.close()
+    coll = db()[settings.AUDIT_COLLECTION]
+    latest = [g["_id"] for g in coll.aggregate([
+        {"$match": {"step": {"$nin": list(JOB_STEPS)}}},
+        {"$group": {"_id": "$run_id", "last": {"$max": "$_id"}}},
+        {"$sort": {"last": -1}},
+        {"$limit": limit}])]
     runs = {}
-    for r in rows:
+    for r in coll.find({"run_id": {"$in": latest}}).sort("_id", 1):
         run = runs.setdefault(r["run_id"], {"run_id": r["run_id"], "ts": r["ts"], "channel": r["channel"],
                                             "file": r["file"], "record_id": None, "steps": {}})
         run["steps"][r["step"]] = r["decision"]

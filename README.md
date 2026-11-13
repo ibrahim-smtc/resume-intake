@@ -22,7 +22,7 @@ app/
   intake/            Validation, junk rules, Questlight API client, matching & ranking
   parsing/           Perfox extraction client, normalization, verification, /parsing/* routes
   agent/             FastMCP server (/mcp), 9 MCP tools, session store, /fill/{token}, WhatsApp notify
-  observability/     SQLite audit log (/log) and span tracing (/trace)
+  observability/     MongoDB audit log (/log), span tracing (/trace) and Perfox token usage
   static/            Web UI, audit/trace viewers, and fill-in form assets
 docs/
   perfox-agent-setup.md   Perfox MCP integration, prompt, and webhook configuration
@@ -38,6 +38,8 @@ pip install -r requirements.txt
 copy .env.example .env
 python run.py
 ```
+
+A MongoDB must be running for the audit log and traces (locally: install MongoDB Community Server, e.g. `winget install MongoDB.Server`; the default URI is `mongodb://localhost:27017`). If it is down, uploads still work but the audit log, traces and usage are not recorded, and a warning is printed.
 
 Server starts at `http://127.0.0.1:8000` (`/` chat UI, `/classic` direct upload, `/log` audit log, `/trace` step timings, `/mcp` MCP endpoint).
 
@@ -79,7 +81,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 | `MCP_TOKEN` | Bearer token required on `POST /mcp` (register the same value in the Perfox integration) |
 | `APP_PASSWORD` | Without it the pages, the audit log and the upload APIs are open to anyone who can reach the URL (and, behind Cloudflare, they answer 404). `/parsing/*` has no login in any case: keep it off the public internet, or put the company's SSO or ingress authentication in front |
 | `MCP_FILE_HOSTS` | Comma-separated hosts the agent may download resumes from. Empty means any https host |
-| `AUDIT_DB` | Path of the SQLite audit log and traces. The default (`data/audit.db`, inside the app folder) is lost when the container is replaced: point it at a persistent volume |
+| `MONGODB_URI` | Connection string of the MongoDB that holds the audit log, traces and Perfox usage (default `mongodb://localhost:27017`). Hosts, replica set, SRV, credentials, TLS, pool size and timeouts all go in the string. Use a MongoDB with authentication turned on, and keep the string out of git and logs. Without `serverSelectionTimeoutMS` in it, a MongoDB that is down stalls each log write for up to 30 s (intake still completes) |
+| `MONGODB_DB` | Database name. Default: the database named in the URI, else `questlight_local` |
 
 **Network:**
 - The ingress or load balancer must allow request bodies up to `MAX_UPLOAD_MB` (default 5 MB; nginx's default limit is 1 MB, which would refuse most resumes) and wait at least **300 s** for a response: the chat page waits up to 280 s for the agent, and creating a job from a JD can take two minutes inside Questlight.
