@@ -23,8 +23,8 @@ Perfox must be able to open `https://<host>/mcp`. Two ways:
   tools\cloudflared.exe tunnel --url http://127.0.0.1:8000     # prints https://<random>.trycloudflare.com
   ```
 
-  The URL changes every time cloudflared restarts, so update the integration in Perfox when it does. Through the tunnel only
-  `/mcp` answers (it needs the token); the page, `/log` and `/trace` stay local.
+  The URL changes every time cloudflared restarts, so update the integration in Perfox when it does. Without `APP_PASSWORD` the page,
+  `/log` and `/trace` answer through the tunnel too: set a password before sharing the URL.
 
 ## 2. Register the MCP server (Connect > Integrations > + Register MCP server)
 

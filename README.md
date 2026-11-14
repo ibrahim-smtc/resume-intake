@@ -15,7 +15,7 @@ Recruiters interact via a Perfox agent (WhatsApp or chat over `POST /mcp`) or th
 app/
   main.py            FastAPI entrypoint (MCP mount, JSON APIs, web pages)
   settings.py        Environment configuration loader
-  security.py        HTTP Basic guard and Cloudflare tunnel isolation
+  security.py        HTTP Basic guard (optional password)
   net.py             Shared SSL context httpx client factory
   pipeline.py        Resume intake orchestrator
   job_pipeline.py    Job description intake orchestrator
@@ -43,7 +43,7 @@ A MongoDB must be running for the audit log and traces (locally: install MongoDB
 
 Server starts at `http://127.0.0.1:8000` (`/` chat UI, `/classic` direct upload, `/log` audit log, `/trace` step timings, `/mcp` MCP endpoint).
 
-For local Perfox testing over HTTPS, expose port `8000` with Cloudflare quick tunnel (`cloudflared tunnel --url http://127.0.0.1:8000`). Without `APP_PASSWORD`, tunnel requests are restricted to `/mcp`.
+For local Perfox testing over HTTPS, expose port `8000` with Cloudflare quick tunnel (`cloudflared tunnel --url http://127.0.0.1:8000`). Without `APP_PASSWORD` the pages are open, tunnel or not.
 
 ## Environment Variables
 
@@ -79,7 +79,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 | `QUESTLIGHT_TOKEN` | Valid for 10 days. Ask the Questlight team for a service account or API key; until then it must be renewed and the app restarted |
 | `PUBLIC_BASE_URL` | The address people reach the app at, e.g. `https://intake.example.com`. The app only learns its own address on Vercel; without this the fill-in form links sent on WhatsApp are `/fill/<token>` with no host and do not open on a phone |
 | `MCP_TOKEN` | Bearer token required on `POST /mcp` (register the same value in the Perfox integration) |
-| `APP_PASSWORD` | Without it the pages, the audit log and the upload APIs are open to anyone who can reach the URL (and, behind Cloudflare, they answer 404). `/parsing/*` has no login in any case: keep it off the public internet, or put the company's SSO or ingress authentication in front |
+| `APP_PASSWORD` | Without it the pages, the audit log and the upload APIs are open to anyone who can reach the URL. `/parsing/*` has no login in any case: keep it off the public internet, or put the company's SSO or ingress authentication in front |
 | `MCP_FILE_HOSTS` | Comma-separated hosts the agent may download resumes from. Empty means any https host |
 | `MONGODB_URI` | Connection string of the MongoDB that holds the audit log, traces and Perfox usage (default `mongodb://localhost:27017`). Hosts, replica set, SRV, credentials, TLS, pool size and timeouts all go in the string. Use a MongoDB with authentication turned on, and keep the string out of git and logs. A MongoDB that is down is given up on after 5 s (set `serverSelectionTimeoutMS` in the string to change that) and is not tried again for 60 s, so intake carries on without logging instead of stalling; each skipped write prints an `[audit] WARNING` line |
 | `MONGODB_DB` | Database name. Default: the database named in the URI, else `questlight_local` |
