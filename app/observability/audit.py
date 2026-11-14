@@ -6,12 +6,13 @@ import hashlib
 import json
 import os
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
 from bson.errors import BSONError
 from pymongo import ASCENDING, MongoClient
-from pymongo.errors import ConfigurationError, PyMongoError
+from pymongo.errors import ConfigurationError, ConnectionFailure, PyMongoError
 
 from app import settings
 
@@ -20,9 +21,28 @@ CHANNEL = "manual upload"
 # What a failed write can raise: the server is unreachable or rejects it, the document can't be encoded, or a setting is wrong.
 STORE_ERRORS = (PyMongoError, BSONError, OSError)
 
+RETRY_AFTER_S = 60
+DEFAULT_TIMEOUTS_MS = {"serverSelectionTimeoutMS": 5000, "connectTimeoutMS": 5000}
+
 _lock = threading.Lock()
 _clients: dict = {}   # one pooled, thread-safe MongoClient per connection string
 _ready: set = set()   # (connection string, database) pairs whose collections and indexes exist
+_down: dict = {}      # connection string -> time.monotonic() before which it is not tried again
+
+
+def _uri() -> str:
+    return os.getenv("MONGODB_URI") or settings.MONGODB_URI
+
+
+def _timeouts(uri: str) -> dict:
+    lowered = uri.lower()
+    return {name: ms for name, ms in DEFAULT_TIMEOUTS_MS.items() if name.lower() not in lowered}
+
+
+def store_failed(exc: Exception) -> None:
+    uri, now = _uri(), time.monotonic()
+    if isinstance(exc, ConnectionFailure) and _down.get(uri, 0) <= now:
+        _down[uri] = now + RETRY_AFTER_S
 
 
 def short(exc: Exception) -> str:
@@ -33,19 +53,25 @@ def short(exc: Exception) -> str:
 def db():
     """The database, with its collections and indexes created on first use. MONGODB_URI and MONGODB_DB are read on each call, so
     a test or a deployment can switch them. Raises when MongoDB can't be reached: callers that must not fail catch STORE_ERRORS."""
-    uri = os.getenv("MONGODB_URI") or settings.MONGODB_URI
+    uri = _uri()
+    if _down.get(uri, 0) > time.monotonic():
+        raise ConnectionFailure("MongoDB could not be reached a moment ago, so it is not tried again yet")
     name = (os.getenv("MONGODB_DB") or settings.MONGODB_DB).strip()
     with _lock:
         client = _clients.get(uri)
         if client is None:
             try:
-                client = _clients[uri] = MongoClient(uri, appname="questlight-resume-intake")  # connects lazily, on the first operation
+                client = _clients[uri] = MongoClient(uri, appname="questlight-resume-intake", **_timeouts(uri))  # connects lazily, on the first operation
             except ValueError:  # some malformed strings (a bad port, say) come out of the driver as a plain ValueError
                 raise ConfigurationError("MONGODB_URI is not a valid connection string") from None  # its text may hold a password
     database = client[name] if name else client.get_default_database(default=settings.DEFAULT_MONGODB_DB)
     key = (uri, database.name)
     if key not in _ready:
-        _create_indexes(database)
+        try:
+            _create_indexes(database)
+        except ConnectionFailure as exc:
+            store_failed(exc)
+            raise
         _ready.add(key)  # only after it worked, so a MongoDB that was down is tried again
     return database
 
@@ -94,6 +120,7 @@ class Run:
                 "record_id": record_id,     # Questlight applicant ID (CAN-...), once there is one
                 "details": plain(details)})  # small facts: rule signals, missing field names. Never candidate data
         except STORE_ERRORS as exc:
+            store_failed(exc)
             print(f"[audit] WARNING: couldn't write to the audit log ({short(exc)})")
 
 

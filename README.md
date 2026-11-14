@@ -81,7 +81,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 | `MCP_TOKEN` | Bearer token required on `POST /mcp` (register the same value in the Perfox integration) |
 | `APP_PASSWORD` | Without it the pages, the audit log and the upload APIs are open to anyone who can reach the URL (and, behind Cloudflare, they answer 404). `/parsing/*` has no login in any case: keep it off the public internet, or put the company's SSO or ingress authentication in front |
 | `MCP_FILE_HOSTS` | Comma-separated hosts the agent may download resumes from. Empty means any https host |
-| `MONGODB_URI` | Connection string of the MongoDB that holds the audit log, traces and Perfox usage (default `mongodb://localhost:27017`). Hosts, replica set, SRV, credentials, TLS, pool size and timeouts all go in the string. Use a MongoDB with authentication turned on, and keep the string out of git and logs. Without `serverSelectionTimeoutMS` in it, a MongoDB that is down stalls each log write for up to 30 s (intake still completes) |
+| `MONGODB_URI` | Connection string of the MongoDB that holds the audit log, traces and Perfox usage (default `mongodb://localhost:27017`). Hosts, replica set, SRV, credentials, TLS, pool size and timeouts all go in the string. Use a MongoDB with authentication turned on, and keep the string out of git and logs. A MongoDB that is down is given up on after 5 s (set `serverSelectionTimeoutMS` in the string to change that) and is not tried again for 60 s, so intake carries on without logging instead of stalling; each skipped write prints an `[audit] WARNING` line |
 | `MONGODB_DB` | Database name. Default: the database named in the URI, else `questlight_local` |
 
 **Network:**

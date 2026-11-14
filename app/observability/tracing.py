@@ -122,12 +122,14 @@ class Trace:
                   "input_tokens": s.input_tokens, "output_tokens": s.output_tokens, "details": audit.plain(s.details)}
                  for s in self.spans], ordered=False)
         except audit.STORE_ERRORS as exc:
+            audit.store_failed(exc)
             print(f"[trace] WARNING: couldn't save the trace ({audit.short(exc)})")
             if isinstance(exc, ConnectionFailure):
                 return  # MongoDB can't be reached: the usage write would only wait for it as well
         try:
             _record_usage(audit.db(), self)
         except audit.STORE_ERRORS as exc:
+            audit.store_failed(exc)
             print(f"[usage] WARNING: couldn't record the Perfox usage ({audit.short(exc)})")
 
 
