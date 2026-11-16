@@ -161,7 +161,8 @@ def view(intake) -> dict:
         intro = "Questlight needs these before it can create the profile."
     else:
         intro = "Nothing is missing. Check what was read, then create the profile."
-    can_skip = not unread and not blocked and bool(missing) and all(":" in f["id"] for f in missing)
+    no_education = not unread and not any(isinstance(e, dict) and (e.get("degree") or e.get("institution")) for e in intake.parsed.get("education") or [])
+    can_skip = not unread and not blocked and bool(missing) and all(":" in f["id"] for f in missing) and not no_education
     dates = any(f["id"].startswith("job_start:") for f in missing)
     others = any(not f["id"].startswith(("job_start:", "job_end:")) for f in missing)
     out = {"status": "open", "file": intake.name, "title": "Complete the candidate's details", "intro": intro,
@@ -171,7 +172,8 @@ def view(intake) -> dict:
     if blocked:
         out["intro"] = "This resume can't be completed here: a new resume that shows these is needed."
     elif missing and not can_skip and not unread:
-        out["skip_note"] = "Can't be skipped: Questlight won't create a profile without " + ", ".join(f["label"].lower() for f in missing if ":" not in f["id"]) + "."
+        needed = [f["label"].lower() for f in missing if ":" not in f["id"]] + (["an education (a degree and an institution)"] if no_education else [])
+        out["skip_note"] = "Can't be skipped: Questlight won't create a profile without " + ", ".join(needed) + "."
     return out
 
 
