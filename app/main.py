@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import settings, pipeline
 from app.agent import chat_bridge, forms, intakes, mcp_app, tool_guide
-from app.observability import audit, tracing
+from app.observability import audit, llm_usage, tracing
 from app.parsing.router import router as parsing_router
 from app.security import AccessGuard
 
@@ -24,13 +24,14 @@ def _prepare_mongodb() -> None:
 @contextlib.asynccontextmanager
 async def lifespan(_app):
     """Creates the MongoDB collections and indexes in the background (so a MongoDB that is down never delays startup), then runs
-    the MCP session manager."""
+    the MCP session manager. On the way out, the queued LLM usage is written."""
     setup = asyncio.create_task(asyncio.to_thread(_prepare_mongodb))
     try:
         async with mcp_app.lifespan(_app):
             yield
     finally:
         await setup
+        await asyncio.to_thread(llm_usage.flush)
 
 
 # No auto-generated /docs, /redoc or /openapi.json: nothing needs them, and this app may face the internet.

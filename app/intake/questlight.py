@@ -1,4 +1,5 @@
 """Questlight applicant DTO validation, profile creation, lookup, and screening client."""
+import base64
 import json
 import os
 import re
@@ -299,6 +300,19 @@ def auth_headers():
     if origin:  # TenantOriginGuard compares this with the tenant's allowed domains
         headers["Origin"] = origin
     return headers
+
+
+def token_claims() -> dict:
+    """What QUESTLIGHT_TOKEN's JWT says about itself (user_id, tenant_id...), or {} when it isn't set or can't be read."""
+    headers = auth_headers()
+    if not headers:
+        return {}
+    try:
+        payload = headers["Authorization"].split()[1].split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (IndexError, ValueError, AttributeError):
+        return {}
+    return claims if isinstance(claims, dict) else {}
 
 
 async def create_profile(applicant: dict, name: str, data: bytes, ext: str) -> dict:
