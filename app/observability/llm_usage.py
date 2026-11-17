@@ -13,6 +13,8 @@ from app.intake import questlight
 from app.observability import audit
 
 SCHEMA_VERSION = 1
+SERVICE = "resume-agent-mcp"
+FLUSH_SECONDS, BATCH_SIZE, QUEUE_MAX = 5, 200, 10000   # write every 5 s or 200 events; keep at most 10,000 queued
 EVENTS, DAILY = "llm_usage_events", "llm_usage_daily"
 STATUSES = ("ok", "error", "rate_limited", "timeout", "connection", "cancelled")
 ROLLUP_KEY = ("day", "tenant_id", "service", "operation", "model")
@@ -33,21 +35,14 @@ def _env(name: str, default: str = "") -> str:
     return (os.getenv(name) or "").strip() or default
 
 
-def _number(name: str, default: float) -> float:
-    try:
-        return float(_env(name) or default)
-    except ValueError:
-        return default
-
-
 def enabled() -> bool:
-    return bool(_env("LLM_USAGE_MONGO_URL") and _env("LLM_USAGE_DB_NAME")) and _env("LLM_USAGE_ENABLED", "true").lower() != "false"
+    return bool(_env("LLM_USAGE_MONGO_URL") and _env("LLM_USAGE_DB_NAME"))
 
 
 def operation_name(kind: str) -> str:
     if kind == "jd":
-        return _env("LLM_USAGE_OPERATION_JD", "jd.extract")
-    return _env("LLM_USAGE_OPERATION_RESUME", "resume.extract")
+        return "jd.extract"
+    return "resume.extract"
 
 
 def record(*, operation: str, status: str, latency_ms: int | None, http_status: int | None = None, error_type: str | None = None,
@@ -58,14 +53,14 @@ def record(*, operation: str, status: str, latency_ms: int | None, http_status: 
         return
     try:
         claims = questlight.token_claims()
-        tenant = _env("LLM_USAGE_TENANT_ID") or claims.get("tenant_id") or None
+        tenant = claims.get("tenant_id") or None
         user = claims.get("user_id") or None
         event = {
             "schema_version": SCHEMA_VERSION,
             "ts": datetime.now(timezone.utc),
-            "service": _env("LLM_USAGE_SERVICE_NAME", "resume-agent-mcp"),
+            "service": SERVICE,
             "operation": operation,
-            "provider": _env("LLM_USAGE_PROVIDER", "perfox"),
+            "provider": "perfox",
             "model": model or "unreported",
             "model_served": model_served,
             "attempt": 1,
@@ -84,7 +79,7 @@ def record(*, operation: str, status: str, latency_ms: int | None, http_status: 
             "request_id": request_id,
         }
         _start()
-        if _queue.qsize() >= _number("LLM_USAGE_QUEUE_MAX", 10000):
+        if _queue.qsize() >= QUEUE_MAX:
             _dropped += 1
             if _dropped == 1 or _dropped % 1000 == 0:
                 print(f"[llm-usage] WARNING: the usage queue is full; {_dropped} events dropped so far", flush=True)
@@ -130,8 +125,8 @@ def _run() -> None:
 def _collect() -> tuple[list, list]:
     item = _queue.get()
     batch: list = []
-    size = max(1, int(_number("LLM_USAGE_BATCH_SIZE", 200)))
-    deadline = time.monotonic() + _number("LLM_USAGE_FLUSH_SECONDS", 5)
+    size = BATCH_SIZE
+    deadline = time.monotonic() + FLUSH_SECONDS
     while True:
         if isinstance(item, threading.Event):
             return batch, [item]

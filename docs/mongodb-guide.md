@@ -45,7 +45,7 @@ Keep the connection string out of git and out of logs.
 1. Ask the Questlight team for the connection URL, the database name, and a user that can only insert and update.
 2. Ask them to run their `scripts/create-llm-usage-indexes.js` on that database. The app never creates indexes there.
 3. Set `LLM_USAGE_MONGO_URL` and `LLM_USAGE_DB_NAME`. Both are needed to switch it on.
-4. Optional settings: `LLM_USAGE_SERVICE_NAME` (default `resume-agent-mcp`), `LLM_USAGE_PROVIDER` (default `perfox`), `PERFOX_EXTRACT_MODEL` (the model name, if known).
+4. Optional: set `PERFOX_EXTRACT_MODEL` to the model name, if known. Everything else is fixed in the code.
 5. Restart the app, parse a fake resume, and check that a row appears in `llm_usage_events`.
 
 ## What is not done
