@@ -8,7 +8,7 @@ import os
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from bson.errors import BSONError
 from pymongo import ASCENDING, MongoClient
@@ -17,6 +17,14 @@ from pymongo.errors import ConfigurationError, ConnectionFailure, PyMongoError
 from app import settings
 
 CHANNEL = "manual upload"
+
+# Times are stored in Indian Standard Time as ISO 8601 strings with the offset (2026-11-16T17:42:10+05:30), so they read the same in
+# Compass as on the pages. IST has no daylight saving, so a fixed offset is exact and needs no timezone database.
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def now_ist() -> datetime:
+    return datetime.now(IST)
 
 # What a failed write can raise: the server is unreachable or rejects it, the document can't be encoded, or a setting is wrong.
 STORE_ERRORS = (PyMongoError, BSONError, OSError)
@@ -109,7 +117,7 @@ class Run:
         # A broken log must not stop intake, but it must be loud: a silent gap would make the reports wrong.
         try:
             db()[settings.AUDIT_COLLECTION].insert_one({
-                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # UTC, ISO 8601
+                "ts": now_ist().isoformat(timespec="seconds"),  # IST, ISO 8601 with the +05:30 offset
                 "run_id": self.run_id,      # ties together the steps of one upload
                 "channel": self.channel,
                 "file": self.file,
@@ -136,7 +144,7 @@ def recent(limit: int = 200) -> list:
 
 def summary(since: str | None = None) -> dict:
     """Counts per step and decision, e.g. {"junk_check": {"junk": 3, "accepted": 10, "needs_review": 1}}.
-    since: an ISO 8601 UTC timestamp; only rows at or after it are counted."""
+    since: an ISO 8601 IST timestamp (with +05:30); only rows at or after it are counted."""
     out = {}
     for g in db()[settings.AUDIT_COLLECTION].aggregate([
             {"$match": {"ts": {"$gte": since or ""}}},

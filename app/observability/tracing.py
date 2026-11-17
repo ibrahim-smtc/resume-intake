@@ -3,7 +3,6 @@ import time
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timezone
 
 from pymongo.errors import ConnectionFailure, DuplicateKeyError
 
@@ -14,7 +13,7 @@ KINDS = {"chain", "tool", "llm"}  # LangSmith run types: chain = a group of step
 
 # Collections (names in settings.py; indexes are created in audit.db()):
 #   trace_spans: one document per step of a run: trace_id (= audit run_id), span_id, parent_id (None for the root span),
-#     seq (order the spans started in), name, kind (chain | tool | llm), start_ts (UTC, ISO 8601), offset_ms (from the start
+#     seq (order the spans started in), name, kind (chain | tool | llm), start_ts (IST, ISO 8601 with +05:30), offset_ms (from the start
 #     of the trace), duration_ms, status (ok | error), error, provider (for llm spans: perfox...), model (only when the
 #     provider reports it), input_tokens, output_tokens, details (small facts about the step. Never candidate data).
 #   llm_perfox_usage_events: one document per LLM step (see _record_usage).
@@ -31,7 +30,7 @@ class Span:
         self.seq = len(trace.spans)
         self.name = name
         self.kind = kind if kind in KINDS else "tool"
-        self.started = datetime.now(timezone.utc)
+        self.started = audit.now_ist()
         self._t0 = time.perf_counter()
         self.duration_ms = None
         self.status, self.error = "ok", None
@@ -145,10 +144,11 @@ def _record_usage(database, trace) -> None:
             continue
         reported = s.input_tokens is not None or s.output_tokens is not None
         provider, model = s.provider or "perfox", s.model or "unreported"
-        day = s.started.astimezone(timezone.utc).strftime("%Y-%m-%d")
+        started = s.started.astimezone(audit.IST)  # whatever zone the span was started in
+        day = started.strftime("%Y-%m-%d")  # the IST calendar day
         tokens_in, tokens_out = s.input_tokens or 0, s.output_tokens or 0
         try:
-            events.insert_one({"ts": s.started, "day": day, "trace_id": trace.id, "span_id": s.id, "step": s.name,
+            events.insert_one({"ts": started.isoformat(timespec="milliseconds"), "day": day, "trace_id": trace.id, "span_id": s.id, "step": s.name,
                                "provider": provider, "model": model, "input_tokens": s.input_tokens, "output_tokens": s.output_tokens,
                                "total_tokens": tokens_in + tokens_out if reported else None, "usage_reported": reported,
                                "duration_ms": s.duration_ms, "status": s.status, "error": s.error, "channel": channel})
@@ -158,7 +158,7 @@ def _record_usage(database, trace) -> None:
                          {"$inc": {"calls": 1, "calls_without_usage": 0 if reported else 1, "errors": 1 if s.status == "error" else 0,
                                    "input_tokens": tokens_in, "output_tokens": tokens_out, "total_tokens": tokens_in + tokens_out,
                                    "duration_ms_total": s.duration_ms or 0},
-                          "$set": {"updated_at": datetime.now(timezone.utc)}}, upsert=True)
+                          "$set": {"updated_at": audit.now_ist().isoformat(timespec="seconds")}}, upsert=True)
 
 
 # ---------- where the time went ----------
