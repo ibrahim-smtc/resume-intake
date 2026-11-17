@@ -84,6 +84,19 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 | `MONGODB_URI` | Connection string of the MongoDB that holds the audit log, traces and Perfox usage (default `mongodb://localhost:27017`). Hosts, replica set, SRV, credentials, TLS, pool size and timeouts all go in the string. Use a MongoDB with authentication turned on, and keep the string out of git and logs. A MongoDB that is down is given up on after 5 s (set `serverSelectionTimeoutMS` in the string to change that) and is not tried again for 60 s, so intake carries on without logging instead of stalling; each skipped write prints an `[audit] WARNING` line |
 | `MONGODB_DB` | Database name. Default: the database named in the URI, else `questlight_local` |
 
+**Questlight's AI cost dashboards (optional).** Each Perfox parse call can also be written to Questlight's shared `llm_usage_events` and `llm_usage_daily` collections, in the schema Questlight's own services use. Off until both `LLM_USAGE_MONGO_URL` and `LLM_USAGE_DB_NAME` are set. The app never creates those collections or their indexes: run Questlight's `scripts/create-llm-usage-indexes.js` on that database first. The MongoDB user needs only insert and update on the two collections. Events are queued and written in the background, so a parse never waits for this MongoDB. When a write fails, the events are printed as `LLM_USAGE_EVENT {json}` lines (with `not_written` naming what is missing) and that MongoDB is skipped for 30 s. No cost is recorded, because Perfox doesn't report one.
+
+| Setting | Purpose |
+|---|---|
+| `LLM_USAGE_MONGO_URL`, `LLM_USAGE_DB_NAME` | Questlight's usage MongoDB and database. Both are needed to turn the writer on |
+| `LLM_USAGE_SERVICE_NAME` | `service` on every event (default `resume-agent-mcp`) |
+| `LLM_USAGE_PROVIDER` | `provider` (default `perfox`) |
+| `LLM_USAGE_OPERATION_RESUME`, `LLM_USAGE_OPERATION_JD` | `operation` for a resume and for a JD (default `resume.extract`, `jd.extract`) |
+| `PERFOX_EXTRACT_MODEL` | `model`, since Perfox doesn't name it (default `unreported`). Also shown on `/trace` |
+| `LLM_USAGE_TENANT_ID` | `tenant_id`. Default: the `tenant_id` in `QUESTLIGHT_TOKEN`; `user_id` is that token's user |
+| `LLM_USAGE_FLUSH_SECONDS`, `LLM_USAGE_BATCH_SIZE`, `LLM_USAGE_QUEUE_MAX` | Write every 5 s or 200 events; keep at most 10,000 queued (more are dropped and counted) |
+| `LLM_USAGE_ENABLED` | `false` turns the writer off while keeping the other settings |
+
 **Network:**
 - The ingress or load balancer must allow request bodies up to `MAX_UPLOAD_MB` (default 5 MB; nginx's default limit is 1 MB, which would refuse most resumes) and wait at least **300 s** for a response: the chat page waits up to 280 s for the agent, and creating a job from a JD can take two minutes inside Questlight.
 - Outbound HTTPS is needed to the Perfox API, the Questlight API and matching service, and the file storage Perfox links point to.

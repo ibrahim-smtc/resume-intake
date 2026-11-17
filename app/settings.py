@@ -17,6 +17,7 @@ PARSER = "perfox"
 # Perfox API credentials
 PERFOX_BASE_URL = os.getenv("PERFOX_BASE_URL", "").rstrip("/")
 PERFOX_API_KEY = os.getenv("PERFOX_API_KEY", "")
+PERFOX_EXTRACT_MODEL = os.getenv("PERFOX_EXTRACT_MODEL", "").strip()
 # WhatsApp notification settings for completed fill-in forms (PERFOX_MESSAGING_KEY overrides PERFOX_API_KEY).
 PERFOX_MESSAGING_KEY = os.getenv("PERFOX_MESSAGING_KEY", "")
 PERFOX_WHATSAPP_FROM = os.getenv("PERFOX_WHATSAPP_FROM", "").strip()

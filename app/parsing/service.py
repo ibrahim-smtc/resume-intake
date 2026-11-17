@@ -1,13 +1,15 @@
 """Perfox structured extraction client and post-parse normalization for resumes and JDs."""
+import asyncio
 import json
 import logging
+import time
 from datetime import date
 
 import httpx
 
 from app import net, settings
 from app.intake import documents
-from app.observability import tracing
+from app.observability import llm_usage, tracing
 from app.parsing.jd.fix_jd import fix_jd
 from app.parsing.jd.jd_schema import build_jd_prompt, build_jd_schema
 from app.parsing.resume.fix_normlization import check_required, fix_dates_and_experience, tidy_education
@@ -28,7 +30,7 @@ log = logging.getLogger("perfox.parsing")
 
 # ── Perfox ────────────────────────────────────────────────────────────────────
 async def call_perfox(
-    name: str, data: bytes, ext: str, text: str, schema: dict, prompt: str
+    name: str, data: bytes, ext: str, text: str, schema: dict, prompt: str, kind: str = "resume", request_id: str | None = None
 ) -> tuple[dict | None, dict | None, Failure | None]:
     perfox_url = settings.PERFOX_BASE_URL
     perfox_key = settings.PERFOX_API_KEY
@@ -50,6 +52,7 @@ async def call_perfox(
     files = {"file": (upload_name, upload_data, mime)}
     headers = {"Authorization": f"Bearer {key}"}
 
+    started = time.perf_counter()
     try:
         async with net.client(TIMEOUT_S) as client:
             resp = await client.post(
@@ -58,12 +61,19 @@ async def call_perfox(
                 files=files,
                 data=payload_data,
             )
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
+        _record_call(kind, request_id, _ms(started), "timeout", error=exc)
         return None, None, (504, "GATEWAY_TIMEOUT", f"Perfox timed out after {TIMEOUT_S}s")
     except httpx.HTTPError as exc:
+        _record_call(kind, request_id, _ms(started), "connection" if isinstance(exc, httpx.TransportError) else "error", error=exc)
         return None, None, (502, "BAD_GATEWAY", f"Could not reach Perfox: {exc}")
+    except asyncio.CancelledError as exc:
+        _record_call(kind, request_id, _ms(started), "cancelled", error=exc)
+        raise
+    latency_ms = _ms(started)
 
     if resp.status_code != 200:
+        _record_call(kind, request_id, latency_ms, "rate_limited" if resp.status_code == 429 else "error", http_status=resp.status_code)
         try:
             body = resp.json()
             detail = f"{body.get('error', 'Error')}: {body.get('message', resp.text)}"
@@ -74,9 +84,32 @@ async def call_perfox(
 
     try:
         result = resp.json()
-        return result["data"], result.get("usage"), None
-    except (KeyError, ValueError, TypeError, AttributeError):
+        parsed, usage = result["data"], result.get("usage")
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        _record_call(kind, request_id, latency_ms, "error", error=exc, http_status=resp.status_code)
         return None, None, (502, "BAD_GATEWAY", "Perfox returned an invalid response structure")
+    _record_call(kind, request_id, latency_ms, "ok", http_status=resp.status_code, usage=usage)
+    return parsed, usage, None
+
+
+def _ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)
+
+
+def _record_call(kind: str, request_id: str | None, latency_ms: int, status: str, *, error: BaseException | None = None,
+                 http_status: int | None = None, usage=None) -> None:
+    tokens = token_counts(usage)
+    served = usage.get("model") if isinstance(usage, dict) and isinstance(usage.get("model"), str) else None
+    model = settings.PERFOX_EXTRACT_MODEL or served
+    tokens_in = tokens["input_tokens"] if tokens else None
+    tokens_out = tokens["output_tokens"] if tokens else None
+    tracing.record_usage(tokens_in, tokens_out, provider="perfox", model=model, status=status)
+    if status == "ok" and not tokens:
+        tracing.current().set(tokens="not reported by Perfox")
+    error_type = type(error).__name__ if error else ("HTTPStatusError" if http_status and http_status != 200 else None)
+    llm_usage.record(operation=llm_usage.operation_name(kind), status=status, latency_ms=latency_ms, http_status=http_status,
+                     error_type=error_type, prompt_tokens=tokens_in, completion_tokens=tokens_out, model=model,
+                     model_served=served, request_id=request_id or tracing.current_trace_id())
 
 
 def token_counts(usage: dict | None) -> dict | None:
@@ -101,14 +134,15 @@ def _readable_text(data: bytes, ext: str, scanned: str) -> tuple[str | None, Fai
 
 
 # ── Reading a resume or a JD ──────────────────────────────────────────────────
-async def read_resume(filename: str, ext: str, data: bytes) -> tuple[dict | None, Failure | None]:
+async def read_resume(filename: str, ext: str, data: bytes, request_id: str | None = None) -> tuple[dict | None, Failure | None]:
     """The resume as JSON (with a "usage" key: the tokens Perfox reports), or a failure."""
     clean, failure = _readable_text(data, ext, "This looks like a scanned image — no text layer found.")
     if failure:
         return None, failure
     log.info("resume ext=%s size=%d text_chars=%d", ext, len(data), len(clean))
 
-    parsed, usage, failure = await call_perfox(filename, data, ext, clean, build_schema(), build_prompt(date.today()))
+    parsed, usage, failure = await call_perfox(filename, data, ext, clean, build_schema(), build_prompt(date.today()),
+                                               kind="resume", request_id=request_id)
     if failure:
         return None, failure
 
@@ -130,7 +164,7 @@ async def read_resume(filename: str, ext: str, data: bytes) -> tuple[dict | None
     return body, None
 
 
-async def read_jd(filename: str, ext: str, data: bytes) -> tuple[dict | None, Failure | None]:
+async def read_jd(filename: str, ext: str, data: bytes, request_id: str | None = None) -> tuple[dict | None, Failure | None]:
     """The job description as JSON (with a "usage" key), or a failure."""
     clean, failure = _readable_text(data, ext, "This looks like a scanned image - no text layer found")
     if failure:
@@ -139,7 +173,8 @@ async def read_jd(filename: str, ext: str, data: bytes) -> tuple[dict | None, Fa
         clean = clean[:JD_TEXT_LIMIT]
     log.info("jd ext=%s size=%d text_chars=%d", ext, len(data), len(clean))
 
-    parsed, usage, failure = await call_perfox(filename, data, ext, clean, build_jd_schema(), build_jd_prompt(date.today()))
+    parsed, usage, failure = await call_perfox(filename, data, ext, clean, build_jd_schema(), build_jd_prompt(date.today()),
+                                               kind="jd", request_id=request_id)
     if failure:
         return None, failure
 
@@ -154,11 +189,7 @@ async def parse_resume(name: str, data: bytes, ext: str):
     body, failure = await read_resume(name, ext, data)
     if failure:
         return None, failure[2]
-    usage = body.pop("usage", None)
-    if usage:
-        tracing.record_usage(usage["input_tokens"], usage["output_tokens"], provider="perfox")
-    else:
-        tracing.current().set(tokens="not reported by Perfox")
+    body.pop("usage", None)
     return body, None
 
 
@@ -171,4 +202,5 @@ async def parse_jd(name: str, data: bytes, ext: str, text: str):
         body, failure = await read_jd("jd.txt", ".txt", text[:JD_TEXT_LIMIT].encode("utf-8"))
     if failure:
         return None, failure[2]
+    body.pop("usage", None)
     return body, None
