@@ -1,14 +1,14 @@
 """HTTP access control middleware.
 
 Excludes /mcp (bearer token), /parsing/*, and tokenized /fill/* form routes from APP_PASSWORD.
-When APP_PASSWORD is unset locally, Cloudflare tunnel requests are restricted to /mcp.
+With APP_PASSWORD unset, the pages and APIs are open.
 """
 import base64
 import hmac
 import os
 
 from starlette.datastructures import Headers
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
 from app import settings
 
@@ -43,6 +43,4 @@ class AccessGuard:
             given = _basic_password(headers.get("authorization", ""))
             if not hmac.compare_digest(given.encode(), password.encode()):
                 return await Response("Password required", 401, headers={"WWW-Authenticate": 'Basic realm="Resume intake"'})(scope, receive, send)
-        elif not settings.ON_VERCEL and ("cf-ray" in headers or "cf-connecting-ip" in headers):
-            return await JSONResponse({"detail": "Not Found"}, 404)(scope, receive, send)
         await self.app(scope, receive, send)

@@ -192,7 +192,7 @@ async def provide_missing_details(file_id: str, answers: list[dict[str, str]]) -
     missing_items, for example {"id": "job_title:1", "value": "Data Engineer"}. The ids are job_title:N, job_company:N,
     degree:N, institution:N, job_start:N and job_end:N (N = the entry's number as given in missing_items; a job with no
     dates is asked for as job_start:N, and its end goes in job_end:N: both as month and year, like 03/2020, and the end
-    may be "Present"), and name, email, phone, address or skills (a comma-separated list). Use ONLY ids from missing_items and only values the recruiter actually said:
+    may be "Present"; a resume with no education at all asks for degree:0 and institution:0), and name, email, phone, address or skills (a comma-separated list). Use ONLY ids from missing_items and only values the recruiter actually said:
     never guess a value. Returns what is still missing.
 
     When process_resume says the parser could not read the candidate's email or phone (missing_items has

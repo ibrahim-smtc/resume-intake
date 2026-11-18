@@ -12,6 +12,7 @@ dependencies = [
     "pypdf>=6",
     "pypdfium2>=5",
     "mcp>=1.29,<2",
+    "pymongo>=4.8,<5",
 ]
 
 [tool.uv]

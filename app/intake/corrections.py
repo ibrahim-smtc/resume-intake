@@ -101,10 +101,12 @@ def apply_answer(parsed: dict, key: str, value: str):
         kind, _, number = key.partition(":")
         section, field = _ENTRY_FIELDS[kind]
         entries = parsed.get(section) or []
+        if section == "education" and number == "0" and not entries:
+            entries = parsed[section] = [{}]
         if not number.isdigit() or int(number) >= len(entries) or not isinstance(entries[int(number)], dict):
             return "there is no such entry"
         entries[int(number)][field] = value
-    elif key in ("workExperience", "education"):
+    elif key == "workExperience":
         return "this can't be typed in here: the candidate needs a resume that shows it (with dates)"
     else:
         return "unknown id (use the ids from missing_items)"

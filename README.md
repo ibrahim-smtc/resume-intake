@@ -15,14 +15,14 @@ Recruiters interact via a Perfox agent (WhatsApp or chat over `POST /mcp`) or th
 app/
   main.py            FastAPI entrypoint (MCP mount, JSON APIs, web pages)
   settings.py        Environment configuration loader
-  security.py        HTTP Basic guard and Cloudflare tunnel isolation
+  security.py        HTTP Basic guard (optional password)
   net.py             Shared SSL context httpx client factory
   pipeline.py        Resume intake orchestrator
   job_pipeline.py    Job description intake orchestrator
   intake/            Validation, junk rules, Questlight API client, matching & ranking
   parsing/           Perfox extraction client, normalization, verification, /parsing/* routes
   agent/             FastMCP server (/mcp), 9 MCP tools, session store, /fill/{token}, WhatsApp notify
-  observability/     SQLite audit log (/log) and span tracing (/trace)
+  observability/     MongoDB audit log (/log), span tracing (/trace) and Perfox token usage
   static/            Web UI, audit/trace viewers, and fill-in form assets
 docs/
   perfox-agent-setup.md   Perfox MCP integration, prompt, and webhook configuration
@@ -39,9 +39,11 @@ copy .env.example .env
 python run.py
 ```
 
+A MongoDB must be running for the audit log and traces (locally: install MongoDB Community Server, e.g. `winget install MongoDB.Server`; the default URI is `mongodb://localhost:27017`). If it is down, uploads still work but the audit log, traces and usage are not recorded, and a warning is printed.
+
 Server starts at `http://127.0.0.1:8000` (`/` chat UI, `/classic` direct upload, `/log` audit log, `/trace` step timings, `/mcp` MCP endpoint).
 
-For local Perfox testing over HTTPS, expose port `8000` with Cloudflare quick tunnel (`cloudflared tunnel --url http://127.0.0.1:8000`). Without `APP_PASSWORD`, tunnel requests are restricted to `/mcp`.
+For local Perfox testing over HTTPS, expose port `8000` with Cloudflare quick tunnel (`cloudflared tunnel --url http://127.0.0.1:8000`). Without `APP_PASSWORD` the pages are open, tunnel or not.
 
 ## Environment Variables
 
@@ -77,9 +79,21 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 | `QUESTLIGHT_TOKEN` | Valid for 10 days. Ask the Questlight team for a service account or API key; until then it must be renewed and the app restarted |
 | `PUBLIC_BASE_URL` | The address people reach the app at, e.g. `https://intake.example.com`. Without this the fill-in form links sent on WhatsApp are `/fill/<token>` with no host and do not open on a phone |
 | `MCP_TOKEN` | Bearer token required on `POST /mcp` (register the same value in the Perfox integration) |
-| `APP_PASSWORD` | Without it the pages, the audit log and the upload APIs are open to anyone who can reach the URL (and, behind Cloudflare, they answer 404). `/parsing/*` has no login in any case: keep it off the public internet, or put the company's SSO or ingress authentication in front |
+| `APP_PASSWORD` | Without it the pages, the audit log and the upload APIs are open to anyone who can reach the URL. `/parsing/*` has no login in any case: keep it off the public internet, or put the company's SSO or ingress authentication in front |
 | `MCP_FILE_HOSTS` | Comma-separated hosts the agent may download resumes from. Empty means any https host |
-| `AUDIT_DB` | Path of the SQLite audit log and traces. The default (`data/audit.db`, inside the app folder) is lost when the container is replaced: point it at a persistent volume |
+| `MONGODB_URI` | Connection string of the MongoDB that holds the audit log, traces and Perfox usage (default `mongodb://localhost:27017`). Hosts, replica set, SRV, credentials, TLS, pool size and timeouts all go in the string. Use a MongoDB with authentication turned on, and keep the string out of git and logs. The user needs read and write on the database; the app creates its four collections and their indexes itself on first use (if the user may not create indexes, it prints one warning and carries on, and a DBA can create them). A MongoDB that is down, or credentials that are refused, are given up on after 5 s (set `serverSelectionTimeoutMS` in the string to change that) and are not tried again for 60 s, so intake carries on without logging instead of stalling; each skipped write prints an `[audit] WARNING` line, and `/log` and `/trace` answer 503 meanwhile |
+| `MONGODB_DB` | Database name. Default: the database named in the URI, else `questlight_local`: set it to the production database |
+
+**MongoDB collections.** The app creates these, and their indexes, on first use; they hold no resume text or candidate details (times are stored in IST, with the +05:30 offset):
+
+| Collection | Holds | Indexes |
+|---|---|---|
+| `audit_log` | one document per decision of an upload (step, decision, reason, file name and hash, Questlight ID) | `run_id`, `ts` |
+| `trace_spans` | one document per step of a run (timing, status, tokens) | `(trace_id, seq)`, `parent_id` |
+| `llm_perfox_usage_events` | one document per Perfox parse call (tokens, duration, status) | `(trace_id, span_id)` unique, `ts` |
+| `llm_perfox_usage_daily` | the usage rolled up per day, provider and model | `(day, provider, model)` unique |
+
+Collection names can be changed with `MONGODB_AUDIT_COLLECTION`, `MONGODB_TRACE_COLLECTION`, `MONGODB_USAGE_EVENTS_COLLECTION` and `MONGODB_USAGE_DAILY_COLLECTION`.
 
 **Network:**
 - The ingress or load balancer must allow request bodies up to `MAX_UPLOAD_MB` (default 5 MB; nginx's default limit is 1 MB, which would refuse most resumes) and wait at least **300 s** for a response: the chat page waits up to 280 s for the agent, and creating a job from a JD can take two minutes inside Questlight.
