@@ -38,5 +38,14 @@ MAX_UPLOAD_LABEL = f"{MAX_UPLOAD_MB:g} MB"
 _VERCEL_HOST = os.getenv("VERCEL_PROJECT_PRODUCTION_URL", "").strip()
 PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL", "").strip() or (f"https://{_VERCEL_HOST}" if _VERCEL_HOST else "")).rstrip("/")
 
-# Default SQLite path (/tmp/audit.db on serverless deployments).
-DEFAULT_AUDIT_DB = Path("/tmp/audit.db") if ON_VERCEL else ROOT / "data" / "audit.db"
+# MongoDB holds the audit log, the step traces and the Perfox usage. Everything about the deployment (hosts, replica set, SRV,
+# credentials, TLS, pool size, timeouts) goes in the connection string, so scaling up is a config change.
+MONGODB_URI = os.getenv("MONGODB_URI") or "mongodb://localhost:27017"
+# Database: MONGODB_DB, else the database named in the URI, else this default.
+MONGODB_DB = os.getenv("MONGODB_DB", "").strip()
+DEFAULT_MONGODB_DB = "questlight_local"
+# Collection names (overridable, so several environments can share one cluster).
+AUDIT_COLLECTION = os.getenv("MONGODB_AUDIT_COLLECTION") or "audit_log"
+TRACE_COLLECTION = os.getenv("MONGODB_TRACE_COLLECTION") or "trace_spans"
+USAGE_EVENTS_COLLECTION = os.getenv("MONGODB_USAGE_EVENTS_COLLECTION") or "llm_perfox_usage_events"
+USAGE_DAILY_COLLECTION = os.getenv("MONGODB_USAGE_DAILY_COLLECTION") or "llm_perfox_usage_daily"

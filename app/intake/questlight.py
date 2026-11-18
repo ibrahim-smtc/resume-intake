@@ -224,11 +224,14 @@ def review(parsed: dict, fill: bool = False, source: str = "manual upload") -> d
     adjusted, gaps = [], []
     applicant = build_applicant(parsed, adjusted, gaps, fill, source)
     basics = missing_required(applicant)
-    # name, email and skills can be typed in by the recruiter; education needs a resume that shows it
-    items = [{"id": b, "what": b, "for": "the candidate", "can_supply": b in ("name", "email", "skills")} for b in basics]
+    # name, email and skills can be typed in by the recruiter; so can a first education, as its degree and institution
+    items = [{"id": b, "what": b, "for": "the candidate", "can_supply": True} for b in basics if b != "education"]
+    if "education" in basics:
+        gaps += [{"id": f"{kind}:0", "what": what, "for": "the candidate's education"}
+                 for kind, what in (("degree", "a degree"), ("institution", "an institution"))]
     gaps = [dict(g, can_supply=True) for g in gaps]
     return {"applicant": applicant, "adjusted": adjusted, "items": items + gaps,
-            "missing": basics + [f"{g['what']} for {g['for']}" for g in gaps]}
+            "missing": [b for b in basics if b != "education"] + [f"{g['what']} for {g['for']}" for g in gaps]}
 
 
 def missing_required(applicant: dict) -> list:
