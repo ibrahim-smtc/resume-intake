@@ -15,7 +15,7 @@ tools (`POST /mcp`), which run the same pipelines as the upload page: a resume b
 
 Perfox must be able to open `https://<host>/mcp`. Two ways:
 
-- **Deployed:** the URL is `https://<your-host>/mcp` (on Vercel, `https://<your-project>.vercel.app/mcp`). See "Deploying to a company cloud or container" and "Vercel Deployment" in the README.
+- **Deployed:** the URL is `https://<your-host>/mcp` ). See "Deploying to a company cloud or container" in the README.
 - **On your machine, for development:** run the app and a Cloudflare quick tunnel in two terminals.
 
   ```
@@ -152,7 +152,7 @@ Greeting: leave it **empty**. The app's page shows its own welcome line, and Per
 The page posts to this app's `/api/chat`, which forwards the message to the agent's webhook with a secret and returns the agent's
 reply (an authenticated webhook answers with `response_text`). The file stays on this server: the message only carries a
 private `intake-file://...` link that the MCP server opens. The page waits up to 280 s for the reply (a JD can take two
-minutes); whatever sits in front of the app (an ingress, a load balancer, Vercel's function limit of 300 s) must allow at least 300 s.
+minutes); whatever sits in front of the app (an ingress or a load balancer) must allow at least 300 s.
 
 In Studio, on the agent canvas, add a **Webhook** trigger, wire it into the AI Agent node, and set:
 
@@ -198,6 +198,17 @@ The message is an ordinary text: the candidate's name and Questlight code, and t
 because the recruiter has just messaged the agent (WhatsApp's 24-hour window). It is sent once per file, and a refusal or a timeout
 only means no message: the page still shows the result. The audit log records `notify_whatsapp` as sent, failed or skipped,
 never the number.
+
+### Emailing the form link when details are missing (optional)
+
+On the Email trigger the agent's final reply is emailed to whoever sent or forwarded the resume (never to the candidate). When a resume lacks
+something Questlight requires, `process_resume` returns `form_url`, and the `email` variant of the Personality prompt (case A) puts it in
+that reply, on a line of its own, with a note that it works for 30 minutes. If a result has no `form_url`, the reply asks for the
+resume to be forwarded again. With several resumes in one email each one
+gets its own link. This is the only link the email variant may contain.
+
+- Set `PUBLIC_BASE_URL` on the app: without it `form_url` is `/fill/<token>` with no host and doesn't open from an email.
+- The link expires after 30 minutes and does not survive an app restart. The page then says to send the resume again.
 
 ### Long resumes: the agent may be told "still working"
 

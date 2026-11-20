@@ -52,6 +52,7 @@
   </main>
 
   <script src="/static/trace-view.js"></script>
+  <script src="/static/poll.js"></script>
   <script>
     const main = document.getElementById("main");
     const picker = document.getElementById("picker");
@@ -103,9 +104,9 @@
       try {
         const form = new FormData();
         form.append("file", file);
-        const resp = await fetch("/api/process", { method: "POST", body: form });
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
-        r = await resp.json();
+        const got = await Poll.submit("/api/process", { method: "POST", body: form }, job => "/api/process/" + encodeURIComponent(job));
+        if (!got.ok) throw new Error((got.data && (got.data.detail || got.data.error)) || "HTTP " + got.status);
+        r = got.data;
       } catch (err) {
         r = { ok: false, error: "couldn't reach the server (" + err.message + ")" };
       }

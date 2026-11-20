@@ -7,11 +7,12 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import settings, pipeline
+from app import settings, pipeline, tasks
 from app.agent import chat_bridge, forms, intakes, mcp_app, tool_guide
-from app.observability import audit, tracing
+from app.observability import audit, llm_usage, tracing
 from app.parsing.router import router as parsing_router
 from app.security import AccessGuard
+
 
 def _prepare_mongodb() -> None:
     try:
@@ -23,13 +24,14 @@ def _prepare_mongodb() -> None:
 @contextlib.asynccontextmanager
 async def lifespan(_app):
     """Creates the MongoDB collections and indexes in the background (so a MongoDB that is down never delays startup), then runs
-    the MCP session manager."""
+    the MCP session manager. On the way out, the queued LLM usage is written."""
     setup = asyncio.create_task(asyncio.to_thread(_prepare_mongodb))
     try:
         async with mcp_app.lifespan(_app):
             yield
     finally:
         await setup
+        await asyncio.to_thread(llm_usage.flush)
 
 
 # No auto-generated /docs, /redoc or /openapi.json: nothing needs them, and this app may face the internet.
@@ -93,11 +95,32 @@ def tools():
     return {"agent": chat_bridge.configured(), "groups": tool_guide.TOOL_GUIDE}
 
 
+def _started(key: str) -> JSONResponse:
+    return JSONResponse({"status": "pending", "job": key}, 202)
+
+
+def _polled(key: str, owner: str = "", headers: dict | None = None) -> JSONResponse:
+    code, body = tasks.poll(key, owner)
+    return JSONResponse(body, code, headers=headers)
+
+
+# The three routes below can run longer than Cloudflare waits (100 s, then a 524), so they answer at once with an id and the page
+# asks for the result (see app/tasks.py).
+
 @app.post("/api/process")
 async def process(file: UploadFile = File(...)):
     # One byte past the limit is enough for the size check to refuse it; a huge upload is never read into memory whole.
     data = await file.read(settings.MAX_UPLOAD_BYTES + 1)
-    return await pipeline.process_file(Path(file.filename or "unnamed").name, data)
+    return _started(tasks.start(_process_answer(Path(file.filename or "unnamed").name, data)))
+
+
+async def _process_answer(name: str, data: bytes):
+    return 200, await pipeline.process_file(name, data)
+
+
+@app.get("/api/process/{job}")
+def process_result(job: str):
+    return _polled(job)
 
 
 @app.post("/api/chat")
@@ -108,7 +131,16 @@ async def chat(message: str = Form(""), session_id: str = Form(""), file: Upload
     upload = None
     if file is not None and file.filename:
         upload = (Path(file.filename).name, await file.read(settings.MAX_UPLOAD_BYTES + 1))  # see process()
-    return await chat_bridge.send(session_id, message, upload)
+    return _started(tasks.start(_chat_answer(session_id, message, upload)))
+
+
+async def _chat_answer(session_id: str, message: str, upload):
+    return 200, await chat_bridge.send(session_id, message, upload)
+
+
+@app.get("/api/chat/{job}")
+def chat_result(job: str):
+    return _polled(job)
 
 
 def _form_intake(token: str):
@@ -135,23 +167,50 @@ async def form_submit(token: str, request: Request):
         body = await request.json()
     except ValueError:
         body = {}
-    code, out = await forms.submit(intake, body if isinstance(body, dict) else {})
-    return JSONResponse(out, code, headers=forms.PRIVATE)
+    key = tasks.start(forms.submit(intake, body if isinstance(body, dict) else {}), owner=token)
+    return JSONResponse({"status": "pending", "job": key}, 202, headers=forms.PRIVATE)
+
+
+@app.get("/api/form/{token}/job/{job}")
+def form_submit_result(token: str, job: str):
+    """The outcome of a submitted fill-in form: 202 while it is still being worked on, else what the POST used to answer."""
+    return _polled(job, owner=token, headers=forms.PRIVATE)
+
+
+def _store_unavailable(exc: Exception) -> HTTPException:
+    print(f"[audit] WARNING: the log pages can't read MongoDB ({audit.short(exc)})")  # short() leaves out credentials
+    return HTTPException(status_code=503, detail="audit store unavailable")
+
+
+def _store_unavailable(exc: Exception) -> HTTPException:
+    """The audit store can't be read (MongoDB down or refusing): a clear 503 for the page, not a stack trace. Uploads don't depend on it."""
+    audit.store_failed(exc)
+    print(f"[audit] WARNING: couldn't read the audit store ({audit.short(exc)})")
+    return HTTPException(status_code=503, detail="audit store unavailable")
 
 
 @app.get("/api/log")
 def log_rows(limit: int = 200):
-    return {"summary": audit.summary(), "rows": audit.recent(max(1, min(limit, 1000)))}
+    try:
+        return {"summary": audit.summary(), "rows": audit.recent(max(1, min(limit, 1000)))}
+    except audit.STORE_ERRORS as exc:
+        raise _store_unavailable(exc) from None
 
 
 @app.get("/api/traces")
 def trace_list(limit: int = 100):
-    return {"traces": tracing.recent_traces(max(1, min(limit, 500))), "steps": tracing.step_stats()}
+    try:
+        return {"traces": tracing.recent_traces(max(1, min(limit, 500))), "steps": tracing.step_stats()}
+    except audit.STORE_ERRORS as exc:
+        raise _store_unavailable(exc) from None
 
 
 @app.get("/api/trace/{trace_id}")
 def trace_detail(trace_id: str):
-    found = tracing.get_trace(trace_id)
+    try:
+        found = tracing.get_trace(trace_id)
+    except audit.STORE_ERRORS as exc:
+        raise _store_unavailable(exc) from None
     if not found:
         raise HTTPException(status_code=404, detail="no trace with this ID")
     return found

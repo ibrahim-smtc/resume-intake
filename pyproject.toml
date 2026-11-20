@@ -18,9 +18,6 @@ dependencies = [
 [tool.uv]
 package = false
 
-[tool.vercel]
-entrypoint = "app.main:app"
-
 [tool.pyright]
 include = ["app", "run.py"]
 venvPath = "."

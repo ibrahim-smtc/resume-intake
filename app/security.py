@@ -13,7 +13,7 @@ from starlette.responses import Response
 from app import settings
 
 FORM_PATHS = ("/fill/", "/api/form/")
-FORM_FILES = {"/static/form-view.js", "/static/form.css"}
+FORM_FILES = {"/static/form-view.js", "/static/form.css", "/static/poll.js"}
 
 
 def _basic_password(header: str) -> str:
@@ -29,7 +29,7 @@ def _basic_password(header: str) -> str:
 class AccessGuard:
     def __init__(self, app):
         self.app = app
-        if settings.ON_VERCEL and not os.getenv("APP_PASSWORD"):
+        if not os.getenv("APP_PASSWORD"):
             print("[security] WARNING: APP_PASSWORD is not set, so the pages and APIs are open to anyone with this URL")
 
     async def __call__(self, scope, receive, send):

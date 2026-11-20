@@ -100,7 +100,7 @@ async def parse_resume(pdf_doc: UploadFile = File(...)):
 
     log.info("upload ext=%s size=%d", ext, len(data))
 
-    body, failure = await service.read_resume(filename, ext, data)
+    body, failure = await service.read_resume(filename, ext, data, request_id=req_id)
     if failure:
         return fail(*failure, req_id)
     log.info("elapsed_ms=%d", int((time.monotonic() - t0) * 1000))
@@ -128,7 +128,7 @@ async def parse_jd(
     else:
         return fail(400, "NO_JOB_DESCRIPTION", "Send a file or paste the job description text.", req_id)
 
-    body, failure = await service.read_jd(filename, ext, data)
+    body, failure = await service.read_jd(filename, ext, data, request_id=req_id)
     if failure:
         return fail(*failure, req_id)
     log.info("jd elapsed_ms=%d", int((time.monotonic() - t0) * 1000))

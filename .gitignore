@@ -11,7 +11,6 @@ venv/
 __pycache__/
 *.pyc
 .pytest_cache/
-.vercel/
 tools/
 tests/
 

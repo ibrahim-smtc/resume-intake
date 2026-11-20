@@ -8,7 +8,6 @@ ROOT = Path(__file__).resolve().parent.parent
 if not os.getenv("SKIP_DOTENV"):  # Allows isolated runs to skip loading local .env
     load_dotenv(ROOT / ".env")
 
-ON_VERCEL = bool(os.getenv("VERCEL"))
 STATIC_DIR = ROOT / "app" / "static"
 
 # Resumes and JDs are read by Perfox's extract_structured (app/parsing/service.py).
@@ -17,6 +16,7 @@ PARSER = "perfox"
 # Perfox API credentials
 PERFOX_BASE_URL = os.getenv("PERFOX_BASE_URL", "").rstrip("/")
 PERFOX_API_KEY = os.getenv("PERFOX_API_KEY", "")
+PERFOX_EXTRACT_MODEL = os.getenv("PERFOX_EXTRACT_MODEL", "").strip()
 # WhatsApp notification settings for completed fill-in forms (PERFOX_MESSAGING_KEY overrides PERFOX_API_KEY).
 PERFOX_MESSAGING_KEY = os.getenv("PERFOX_MESSAGING_KEY", "")
 PERFOX_WHATSAPP_FROM = os.getenv("PERFOX_WHATSAPP_FROM", "").strip()
@@ -29,14 +29,13 @@ JD_SCREEN_TOP = int(os.getenv("JD_SCREEN_TOP") or 3)
 # Enables candidate PII redaction and masked PDF requests when true.
 MASKING = os.getenv("MASKING_ENABLED", "false").lower() == "true"
 
-# Max upload size in MB (4 MB default on Vercel due to 4.5 MB body limit; 5 MB locally).
-MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB") or (4 if ON_VERCEL else 5))
+# Max upload size in MB.
+MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB") or 5)
 MAX_UPLOAD_BYTES = int(MAX_UPLOAD_MB * 1024 * 1024)
 MAX_UPLOAD_LABEL = f"{MAX_UPLOAD_MB:g} MB"
 
-# Public base URL for generated /fill/{token} links (falls back to VERCEL_PROJECT_PRODUCTION_URL or relative paths).
-_VERCEL_HOST = os.getenv("VERCEL_PROJECT_PRODUCTION_URL", "").strip()
-PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL", "").strip() or (f"https://{_VERCEL_HOST}" if _VERCEL_HOST else "")).rstrip("/")
+# Public base URL for generated /fill/{token} links (relative paths when not set).
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
 
 # MongoDB holds the audit log, the step traces and the Perfox usage. Everything about the deployment (hosts, replica set, SRV,
 # credentials, TLS, pool size, timeouts) goes in the connection string, so scaling up is a config change.

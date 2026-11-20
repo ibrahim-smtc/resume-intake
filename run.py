@@ -1,6 +1,6 @@
 """Run the app locally:  python run.py   (then open http://127.0.0.1:8000).
 
-Restart it after changing .env. On Vercel this file is not used: Vercel loads `app` from app/main.py.
+Restart it after changing .env. This is for development only: in production the app is started with uvicorn, see the README.
 """
 import uvicorn
 

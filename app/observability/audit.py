@@ -8,20 +8,31 @@ import os
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from bson.errors import BSONError
 from pymongo import ASCENDING, MongoClient
-from pymongo.errors import ConfigurationError, ConnectionFailure, PyMongoError
+from pymongo.errors import ConfigurationError, ConnectionFailure, OperationFailure, PyMongoError
 
 from app import settings
 
 CHANNEL = "manual upload"
 
+# Times are stored in Indian Standard Time as ISO 8601 strings with the offset (2026-11-16T17:42:10+05:30), so they read the same in
+# Compass as on the pages. IST has no daylight saving, so a fixed offset is exact and needs no timezone database.
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def now_ist() -> datetime:
+    return datetime.now(IST)
+
+
 # What a failed write can raise: the server is unreachable or rejects it, the document can't be encoded, or a setting is wrong.
 STORE_ERRORS = (PyMongoError, BSONError, OSError)
 
+UNAUTHORIZED, AUTHENTICATION_FAILED = 13, 18   # server error codes: not allowed to do this / the credentials were refused
 RETRY_AFTER_S = 60
+AUTHENTICATION_FAILED, UNAUTHORIZED = 18, 13   # MongoDB error codes: a refused login, a user without the right
 DEFAULT_TIMEOUTS_MS = {"serverSelectionTimeoutMS": 5000, "connectTimeoutMS": 5000}
 
 _lock = threading.Lock()
@@ -39,9 +50,15 @@ def _timeouts(uri: str) -> dict:
     return {name: ms for name, ms in DEFAULT_TIMEOUTS_MS.items() if name.lower() not in lowered}
 
 
+def refused(exc: Exception) -> bool:
+    """A failure that will repeat on every call until someone changes something: MongoDB is unreachable, or it refuses the credentials."""
+    return isinstance(exc, ConnectionFailure) or (isinstance(exc, OperationFailure) and exc.code in (UNAUTHORIZED, AUTHENTICATION_FAILED))
+
+
 def store_failed(exc: Exception) -> None:
+    """After a failure that will repeat, MongoDB is not tried again for RETRY_AFTER_S, so intake isn't slowed by every audit write."""
     uri, now = _uri(), time.monotonic()
-    if isinstance(exc, ConnectionFailure) and _down.get(uri, 0) <= now:
+    if refused(exc) and _down.get(uri, 0) <= now:
         _down[uri] = now + RETRY_AFTER_S
 
 
@@ -55,7 +72,7 @@ def db():
     a test or a deployment can switch them. Raises when MongoDB can't be reached: callers that must not fail catch STORE_ERRORS."""
     uri = _uri()
     if _down.get(uri, 0) > time.monotonic():
-        raise ConnectionFailure("MongoDB could not be reached a moment ago, so it is not tried again yet")
+        raise ConnectionFailure("MongoDB was unreachable or refused the credentials a moment ago, so it is not tried again yet")
     name = (os.getenv("MONGODB_DB") or settings.MONGODB_DB).strip()
     with _lock:
         client = _clients.get(uri)
@@ -69,10 +86,13 @@ def db():
     if key not in _ready:
         try:
             _create_indexes(database)
-        except ConnectionFailure as exc:
-            store_failed(exc)
-            raise
-        _ready.add(key)  # only after it worked, so a MongoDB that was down is tried again
+        except PyMongoError as exc:
+            if isinstance(exc, ConnectionFailure) or (isinstance(exc, OperationFailure) and exc.code == AUTHENTICATION_FAILED):
+                store_failed(exc)  # unreachable, or the credentials are wrong: nothing can be written either
+                raise
+            # Anything else (a user who may write but not create indexes, say) must not stop the audit log: say so once and carry on.
+            print(f"[audit] WARNING: couldn't create the indexes ({short(exc)}). Logging goes on without them; the README lists the indexes to create by hand")
+        _ready.add(key)  # only after it worked (or was refused for a reason that won't change), so a MongoDB that was down is tried again
     return database
 
 
@@ -109,7 +129,7 @@ class Run:
         # A broken log must not stop intake, but it must be loud: a silent gap would make the reports wrong.
         try:
             db()[settings.AUDIT_COLLECTION].insert_one({
-                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # UTC, ISO 8601
+                "ts": now_ist().isoformat(timespec="seconds"),  # IST, ISO 8601 with the +05:30 offset
                 "run_id": self.run_id,      # ties together the steps of one upload
                 "channel": self.channel,
                 "file": self.file,
@@ -136,7 +156,7 @@ def recent(limit: int = 200) -> list:
 
 def summary(since: str | None = None) -> dict:
     """Counts per step and decision, e.g. {"junk_check": {"junk": 3, "accepted": 10, "needs_review": 1}}.
-    since: an ISO 8601 UTC timestamp; only rows at or after it are counted."""
+    since: an ISO 8601 IST timestamp (with +05:30); only rows at or after it are counted."""
     out = {}
     for g in db()[settings.AUDIT_COLLECTION].aggregate([
             {"$match": {"ts": {"$gte": since or ""}}},

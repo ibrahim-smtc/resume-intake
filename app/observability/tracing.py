@@ -3,9 +3,8 @@ import time
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timezone
 
-from pymongo.errors import ConnectionFailure, DuplicateKeyError
+from pymongo.errors import DuplicateKeyError
 
 from app import settings
 from app.observability import audit
@@ -14,10 +13,10 @@ KINDS = {"chain", "tool", "llm"}  # LangSmith run types: chain = a group of step
 
 # Collections (names in settings.py; indexes are created in audit.db()):
 #   trace_spans: one document per step of a run: trace_id (= audit run_id), span_id, parent_id (None for the root span),
-#     seq (order the spans started in), name, kind (chain | tool | llm), start_ts (UTC, ISO 8601), offset_ms (from the start
+#     seq (order the spans started in), name, kind (chain | tool | llm), start_ts (IST, ISO 8601 with +05:30), offset_ms (from the start
 #     of the trace), duration_ms, status (ok | error), error, provider (for llm spans: perfox...), model (only when the
 #     provider reports it), input_tokens, output_tokens, details (small facts about the step. Never candidate data).
-#   llm_perfox_usage_events: one document per LLM step (see _record_usage).
+#   llm_perfox_usage_events: one document per Perfox call (see _record_usage).
 #   llm_perfox_usage_daily: the usage rolled up per day, provider and model.
 
 _current: ContextVar = ContextVar("current_span", default=None)
@@ -31,12 +30,13 @@ class Span:
         self.seq = len(trace.spans)
         self.name = name
         self.kind = kind if kind in KINDS else "tool"
-        self.started = datetime.now(timezone.utc)
+        self.started = audit.now_ist()
         self._t0 = time.perf_counter()
         self.duration_ms = None
         self.status, self.error = "ok", None
         self.provider = self.model = None
         self.input_tokens = self.output_tokens = None
+        self.call_status = None
         self.details = {}
 
     def set(self, **details) -> None:
@@ -45,11 +45,12 @@ class Span:
     def fail(self, message: str) -> None:
         self.status, self.error = "error", str(message)[:500]
 
-    def set_usage(self, input_tokens=None, output_tokens=None, provider=None, model=None) -> None:
+    def set_usage(self, input_tokens=None, output_tokens=None, provider=None, model=None, status=None) -> None:
         self.input_tokens = int(input_tokens) if input_tokens is not None else None
         self.output_tokens = int(output_tokens) if output_tokens is not None else None
         self.provider = provider or self.provider
         self.model = model or self.model
+        self.call_status = status or self.call_status
 
     @property
     def offset_ms(self) -> float:
@@ -124,8 +125,8 @@ class Trace:
         except audit.STORE_ERRORS as exc:
             audit.store_failed(exc)
             print(f"[trace] WARNING: couldn't save the trace ({audit.short(exc)})")
-            if isinstance(exc, ConnectionFailure):
-                return  # MongoDB can't be reached: the usage write would only wait for it as well
+            if audit.refused(exc):
+                return  # MongoDB is unreachable or refuses the credentials: the usage write would only fail the same way
         try:
             _record_usage(audit.db(), self)
         except audit.STORE_ERRORS as exc:
@@ -134,31 +135,33 @@ class Trace:
 
 
 def _record_usage(database, trace) -> None:
-    """The Perfox usage of a run: one event per LLM step, and the day's totals. The event goes in first (a trace and step can be
+    """The Perfox usage of a run: one event per Perfox call, and the day's totals. The event goes in first (a trace and step can be
     counted only once), and the totals grow only when that insert worked, so saving a trace twice can't count it twice.
     Tokens are null when Perfox didn't report them: such a call is counted in calls_without_usage, not as zero tokens."""
     events = database[settings.USAGE_EVENTS_COLLECTION]
     daily = database[settings.USAGE_DAILY_COLLECTION]
     channel = trace.spans[0].details.get("channel")
     for s in trace.spans:
-        if s.kind != "llm":
+        if s.kind != "llm" or s.call_status is None:
             continue
         reported = s.input_tokens is not None or s.output_tokens is not None
         provider, model = s.provider or "perfox", s.model or "unreported"
-        day = s.started.astimezone(timezone.utc).strftime("%Y-%m-%d")
+        started = s.started.astimezone(audit.IST)  # whatever zone the span was started in
+        day = started.strftime("%Y-%m-%d")  # the IST calendar day
         tokens_in, tokens_out = s.input_tokens or 0, s.output_tokens or 0
         try:
-            events.insert_one({"ts": s.started, "day": day, "trace_id": trace.id, "span_id": s.id, "step": s.name,
+            events.insert_one({"ts": started.isoformat(timespec="milliseconds"), "day": day, "trace_id": trace.id, "span_id": s.id, "step": s.name,
                                "provider": provider, "model": model, "input_tokens": s.input_tokens, "output_tokens": s.output_tokens,
                                "total_tokens": tokens_in + tokens_out if reported else None, "usage_reported": reported,
-                               "duration_ms": s.duration_ms, "status": s.status, "error": s.error, "channel": channel})
+                               "duration_ms": s.duration_ms, "status": s.call_status,
+                               "error": s.error if s.call_status != "ok" else None, "channel": channel})
         except DuplicateKeyError:
             continue
         daily.update_one({"day": day, "provider": provider, "model": model},
-                         {"$inc": {"calls": 1, "calls_without_usage": 0 if reported else 1, "errors": 1 if s.status == "error" else 0,
+                         {"$inc": {"calls": 1, "calls_without_usage": 0 if reported else 1, "errors": 0 if s.call_status == "ok" else 1,
                                    "input_tokens": tokens_in, "output_tokens": tokens_out, "total_tokens": tokens_in + tokens_out,
                                    "duration_ms_total": s.duration_ms or 0},
-                          "$set": {"updated_at": datetime.now(timezone.utc)}}, upsert=True)
+                          "$set": {"updated_at": audit.now_ist().isoformat(timespec="seconds")}}, upsert=True)
 
 
 # ---------- where the time went ----------
@@ -219,9 +222,14 @@ def current():
     return s if isinstance(s, Span) else _NoSpan()
 
 
-def record_usage(input_tokens=None, output_tokens=None, provider=None, model=None) -> None:
-    """Tokens used by the LLM call in the current span (like LangSmith's usage_metadata)."""
-    current().set_usage(input_tokens, output_tokens, provider, model)
+def current_trace_id():
+    s = _current.get()
+    return s.trace.id if isinstance(s, Span) else None
+
+
+def record_usage(input_tokens=None, output_tokens=None, provider=None, model=None, status=None) -> None:
+    """Tokens used by the LLM call in the current span (like LangSmith's usage_metadata), and how the call ended."""
+    current().set_usage(input_tokens, output_tokens, provider, model, status)
 
 
 # ---------- reading traces back ----------

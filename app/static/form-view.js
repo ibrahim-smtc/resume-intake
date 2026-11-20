@@ -27,11 +27,18 @@
   }
 
   async function call(token, body) {
-    const opts = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
+    const url = "/api/form/" + encodeURIComponent(token);
     try {
-      const resp = await fetch("/api/form/" + encodeURIComponent(token), opts);
-      const data = await resp.json().catch(() => ({}));
-      return data.status ? data : { status: "error", message: data.detail || "the server answered HTTP " + resp.status };
+      let got;
+      if (body) {   // a submit can take over a minute: the server answers at once and the result is asked for (poll.js)
+        const opts = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+        got = await Poll.submit(url, opts, job => url + "/job/" + encodeURIComponent(job));
+      } else {
+        const resp = await fetch(url);
+        got = { status: resp.status, data: await resp.json().catch(() => ({})) };
+      }
+      const data = got.data || {};
+      return data.status ? data : { status: "error", message: data.detail || "the server answered HTTP " + got.status };
     } catch (err) {
       return { status: "error", message: "couldn't reach the server (" + err.message + ")" };
     }

@@ -1,7 +1,5 @@
 """Questlight job payload builder, location/client lookup, and creation API client."""
-import base64
 import html
-import json
 import os
 import re
 import time
@@ -110,14 +108,7 @@ def from_parsed(parsed: dict) -> dict:
 
 def _token_user():
     """The Questlight user the token belongs to (its JWT says so); jobs made here have them as the recruiter."""
-    headers = questlight.auth_headers()
-    if not headers:
-        return None
-    try:
-        payload = headers["Authorization"].split()[1].split(".")[1]
-        return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))).get("user_id")
-    except (IndexError, ValueError, AttributeError):
-        return None
+    return questlight.token_claims().get("user_id")
 
 
 async def _get(path: str, **params):
