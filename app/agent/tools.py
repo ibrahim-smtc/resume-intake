@@ -34,7 +34,7 @@ def _offer_form(out: dict, intake) -> dict:
     """Adds form_url (the private link to a fill-in form, see forms.py) when something is still missing for this resume."""
     if out.get("missing_items") and (out.get("profile") or {}).get("status") not in ("created", "duplicate"):
         out["form_url"] = forms.link(intake)
-        offer = "give the recruiter form_url (a form for what is missing: submitting it creates the profile and matches roles)"
+        offer = "give form_url to whoever sent the resume (a form for what is missing: submitting it creates the profile and matches roles)"
         out["next"] = f"{offer}; or {out['next']}" if out.get("next") else offer
     return out
 

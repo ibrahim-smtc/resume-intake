@@ -199,6 +199,17 @@ because the recruiter has just messaged the agent (WhatsApp's 24-hour window). I
 only means no message: the page still shows the result. The audit log records `notify_whatsapp` as sent, failed or skipped,
 never the number.
 
+### Emailing the form link when details are missing (optional)
+
+On the Email trigger the agent's final reply is emailed to whoever sent or forwarded the resume (never to the candidate). When a resume lacks
+something Questlight requires, `process_resume` returns `form_url`, and the `email` variant of the Personality prompt (case A) puts it in
+that reply, on a line of its own, with a note that it works for 30 minutes. If a result has no `form_url`, the reply asks for the
+resume to be forwarded again. With several resumes in one email each one
+gets its own link. This is the only link the email variant may contain.
+
+- Set `PUBLIC_BASE_URL` on the app: without it `form_url` is `/fill/<token>` with no host and doesn't open from an email.
+- The link expires after 30 minutes and does not survive an app restart. The page then says to send the resume again.
+
 ### Long resumes: the agent may be told "still working"
 
 Perfox stops waiting for a tool call after **30 s**, whatever the integration's Timeout says (the Perfox run log shows

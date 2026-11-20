@@ -21,7 +21,7 @@ SHOWN_SKILLS = 12
 # The form opens without the app's password (the token in the link is its key) and shows the candidate's details, so its
 # answers are never cached, never sent on as a Referer, and never indexed.
 PRIVATE = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow"}
-GONE = "This form is no longer open: forms last 30 minutes after the resume was sent. Send the resume to the agent again."
+GONE = "This form is no longer open: forms last 30 minutes after the resume was sent. Send the resume again (by email or in the chat)."
 
 
 def link(intake) -> str:

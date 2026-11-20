@@ -77,7 +77,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 |---|---|
 | `QUESTLIGHT_BASE_URL`, `MATCHING_BASE_URL` | Both default to `dev-api.quest-light.com`; unset, the app writes to the dev system |
 | `QUESTLIGHT_TOKEN` | Valid for 10 days. Ask the Questlight team for a service account or API key; until then it must be renewed and the app restarted |
-| `PUBLIC_BASE_URL` | The address people reach the app at, e.g. `https://intake.example.com`. Without this the fill-in form links sent on WhatsApp are `/fill/<token>` with no host and do not open on a phone |
+| `PUBLIC_BASE_URL` | The address people reach the app at, e.g. `https://intake.example.com`. Without this the fill-in form links sent on WhatsApp or by email are `/fill/<token>` with no host and do not open on a phone |
 | `MCP_TOKEN` | Bearer token required on `POST /mcp` (register the same value in the Perfox integration) |
 | `APP_PASSWORD` | Without it the pages, the audit log and the upload APIs are open to anyone who can reach the URL. `/parsing/*` has no login in any case: keep it off the public internet, or put the company's SSO or ingress authentication in front |
 | `MCP_FILE_HOSTS` | Comma-separated hosts the agent may download resumes from. Empty means any https host |
