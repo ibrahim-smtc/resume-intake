@@ -105,7 +105,7 @@ Collection names can be changed with `MONGODB_AUDIT_COLLECTION`, `MONGODB_TRACE_
 Everything else is fixed: service `resume-agent-mcp`, provider `perfox`, operations `resume.extract` and `jd.extract`, the tenant and user from `QUESTLIGHT_TOKEN`, and writes every 5 s or 200 events.
 
 **Network:**
-- The ingress or load balancer must allow request bodies up to `MAX_UPLOAD_MB` (default 5 MB; nginx's default limit is 1 MB, which would refuse most resumes) and wait at least **300 s** for a response: the chat page waits up to 280 s for the agent, and creating a job from a JD can take two minutes inside Questlight.
+- The ingress or load balancer must allow request bodies up to `MAX_UPLOAD_MB` (default 5 MB; nginx's default limit is 1 MB, which would refuse most resumes) and wait at least **300 s** for a response on `/mcp`. The page routes (`/api/chat`, `/api/process`, the fill-in form's submit) answer at once with an id and the page polls `GET /api/chat/{id}`, `/api/process/{id}` and `/api/form/{token}/job/{id}` every few seconds (`app/tasks.py`, `static/poll.js`), so none of them holds a request open for long: they work behind a proxy such as Cloudflare, which cuts a request after 100 s with a 524. Route those paths too (`/api/*`, `/static/*`, `/fill/*`).
 - Outbound HTTPS is needed to the Perfox API, the Questlight API and matching service, and the file storage Perfox links point to.
 - `GET /parsing/health` answers 200 without a login and suits a liveness probe.
 

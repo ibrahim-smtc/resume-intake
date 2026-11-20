@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import settings, pipeline
+from app import settings, pipeline, tasks
 from app.agent import chat_bridge, forms, intakes, mcp_app, tool_guide
 from app.observability import audit, llm_usage, tracing
 from app.parsing.router import router as parsing_router
@@ -95,11 +95,32 @@ def tools():
     return {"agent": chat_bridge.configured(), "groups": tool_guide.TOOL_GUIDE}
 
 
+def _started(key: str) -> JSONResponse:
+    return JSONResponse({"status": "pending", "job": key}, 202)
+
+
+def _polled(key: str, owner: str = "", headers: dict | None = None) -> JSONResponse:
+    code, body = tasks.poll(key, owner)
+    return JSONResponse(body, code, headers=headers)
+
+
+# The three routes below can run longer than Cloudflare waits (100 s, then a 524), so they answer at once with an id and the page
+# asks for the result (see app/tasks.py).
+
 @app.post("/api/process")
 async def process(file: UploadFile = File(...)):
     # One byte past the limit is enough for the size check to refuse it; a huge upload is never read into memory whole.
     data = await file.read(settings.MAX_UPLOAD_BYTES + 1)
-    return await pipeline.process_file(Path(file.filename or "unnamed").name, data)
+    return _started(tasks.start(_process_answer(Path(file.filename or "unnamed").name, data)))
+
+
+async def _process_answer(name: str, data: bytes):
+    return 200, await pipeline.process_file(name, data)
+
+
+@app.get("/api/process/{job}")
+def process_result(job: str):
+    return _polled(job)
 
 
 @app.post("/api/chat")
@@ -110,7 +131,16 @@ async def chat(message: str = Form(""), session_id: str = Form(""), file: Upload
     upload = None
     if file is not None and file.filename:
         upload = (Path(file.filename).name, await file.read(settings.MAX_UPLOAD_BYTES + 1))  # see process()
-    return await chat_bridge.send(session_id, message, upload)
+    return _started(tasks.start(_chat_answer(session_id, message, upload)))
+
+
+async def _chat_answer(session_id: str, message: str, upload):
+    return 200, await chat_bridge.send(session_id, message, upload)
+
+
+@app.get("/api/chat/{job}")
+def chat_result(job: str):
+    return _polled(job)
 
 
 def _form_intake(token: str):
@@ -137,8 +167,19 @@ async def form_submit(token: str, request: Request):
         body = await request.json()
     except ValueError:
         body = {}
-    code, out = await forms.submit(intake, body if isinstance(body, dict) else {})
-    return JSONResponse(out, code, headers=forms.PRIVATE)
+    key = tasks.start(forms.submit(intake, body if isinstance(body, dict) else {}), owner=token)
+    return JSONResponse({"status": "pending", "job": key}, 202, headers=forms.PRIVATE)
+
+
+@app.get("/api/form/{token}/job/{job}")
+def form_submit_result(token: str, job: str):
+    """The outcome of a submitted fill-in form: 202 while it is still being worked on, else what the POST used to answer."""
+    return _polled(job, owner=token, headers=forms.PRIVATE)
+
+
+def _store_unavailable(exc: Exception) -> HTTPException:
+    print(f"[audit] WARNING: the log pages can't read MongoDB ({audit.short(exc)})")  # short() leaves out credentials
+    return HTTPException(status_code=503, detail="audit store unavailable")
 
 
 def _store_unavailable(exc: Exception) -> HTTPException:

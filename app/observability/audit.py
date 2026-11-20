@@ -32,6 +32,7 @@ STORE_ERRORS = (PyMongoError, BSONError, OSError)
 
 UNAUTHORIZED, AUTHENTICATION_FAILED = 13, 18   # server error codes: not allowed to do this / the credentials were refused
 RETRY_AFTER_S = 60
+AUTHENTICATION_FAILED, UNAUTHORIZED = 18, 13   # MongoDB error codes: a refused login, a user without the right
 DEFAULT_TIMEOUTS_MS = {"serverSelectionTimeoutMS": 5000, "connectTimeoutMS": 5000}
 
 _lock = threading.Lock()
