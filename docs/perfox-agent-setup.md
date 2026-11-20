@@ -15,7 +15,7 @@ tools (`POST /mcp`), which run the same pipelines as the upload page: a resume b
 
 Perfox must be able to open `https://<host>/mcp`. Two ways:
 
-- **Deployed:** the URL is `https://<your-host>/mcp` (on Vercel, `https://<your-project>.vercel.app/mcp`). See "Deploying to a company cloud or container" and "Vercel Deployment" in the README.
+- **Deployed:** the URL is `https://<your-host>/mcp`. See "Deploying to a company cloud or container".
 - **On your machine, for development:** run the app and a Cloudflare quick tunnel in two terminals.
 
   ```
@@ -152,7 +152,7 @@ Greeting: leave it **empty**. The app's page shows its own welcome line, and Per
 The page posts to this app's `/api/chat`, which forwards the message to the agent's webhook with a secret and returns the agent's
 reply (an authenticated webhook answers with `response_text`). The file stays on this server: the message only carries a
 private `intake-file://...` link that the MCP server opens. The page waits up to 280 s for the reply (a JD can take two
-minutes); whatever sits in front of the app (an ingress, a load balancer, Vercel's function limit of 300 s) must allow at least 300 s.
+minutes); whatever sits in front of the app (an ingress or a load balancer) must allow at least 300 s.
 
 In Studio, on the agent canvas, add a **Webhook** trigger, wire it into the AI Agent node, and set:
 

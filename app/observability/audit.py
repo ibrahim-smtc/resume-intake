@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from bson.errors import BSONError
 from pymongo import ASCENDING, MongoClient
-from pymongo.errors import ConfigurationError, ConnectionFailure, PyMongoError
+from pymongo.errors import ConfigurationError, ConnectionFailure, OperationFailure, PyMongoError
 
 from app import settings
 
@@ -30,6 +30,7 @@ def now_ist() -> datetime:
 STORE_ERRORS = (PyMongoError, BSONError, OSError)
 
 RETRY_AFTER_S = 60
+AUTHENTICATION_FAILED, UNAUTHORIZED = 18, 13   # MongoDB error codes: a refused login, a user without the right
 DEFAULT_TIMEOUTS_MS = {"serverSelectionTimeoutMS": 5000, "connectTimeoutMS": 5000}
 
 _lock = threading.Lock()
@@ -49,7 +50,8 @@ def _timeouts(uri: str) -> dict:
 
 def store_failed(exc: Exception) -> None:
     uri, now = _uri(), time.monotonic()
-    if isinstance(exc, ConnectionFailure) and _down.get(uri, 0) <= now:
+    refused = isinstance(exc, OperationFailure) and exc.code in (AUTHENTICATION_FAILED, UNAUTHORIZED)  # retrying a refused login doesn't help
+    if (isinstance(exc, ConnectionFailure) or refused) and _down.get(uri, 0) <= now:
         _down[uri] = now + RETRY_AFTER_S
 
 
@@ -80,6 +82,12 @@ def db():
         except ConnectionFailure as exc:
             store_failed(exc)
             raise
+        except OperationFailure as exc:
+            if exc.code != UNAUTHORIZED:  # a wrong password, say: not tried again for a while
+                store_failed(exc)
+                raise
+            # A user who may write but not create indexes: the audit log still works, just without them. One warning.
+            print("[audit] WARNING: couldn't create the indexes (this MongoDB user may not create them); logging goes on without them")
         _ready.add(key)  # only after it worked, so a MongoDB that was down is tried again
     return database
 

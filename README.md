@@ -67,7 +67,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-`run.py` is for development only (it binds to 127.0.0.1 and reloads on change). Configuration is by environment variables only (see [`.env.example`](.env.example)); no `.env` file is needed in a container (one is only read if it exists). `vercel.json`, `.vercelignore` and `[tool.vercel]` in `pyproject.toml` apply to Vercel only and can be ignored elsewhere. Logs go to stdout and stderr.
+`run.py` is for development only (it binds to 127.0.0.1 and reloads on change). Configuration is by environment variables only (see [`.env.example`](.env.example)); no `.env` file is needed in a container (one is only read if it exists). Logs go to stdout and stderr.
 
 **Run exactly one replica with one worker.** The agent's working state lives in the memory of the process: the files it is working on, the fill-in form links, the "still working, call again" bookkeeping and the job and candidate caches. A second worker or replica would not see another's state (Perfox's tool calls cannot be pinned to one instance), so a follow-up call would answer "no file found for that reference". Running more than one needs that state moved to a shared store such as Redis first. A restart loses whatever was in progress (files are kept for 30 minutes anyway); a recruiter just sends the file again.
 
@@ -77,7 +77,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 |---|---|
 | `QUESTLIGHT_BASE_URL`, `MATCHING_BASE_URL` | Both default to `dev-api.quest-light.com`; unset, the app writes to the dev system |
 | `QUESTLIGHT_TOKEN` | Valid for 10 days. Ask the Questlight team for a service account or API key; until then it must be renewed and the app restarted |
-| `PUBLIC_BASE_URL` | The address people reach the app at, e.g. `https://intake.example.com`. The app only learns its own address on Vercel; without this the fill-in form links sent on WhatsApp are `/fill/<token>` with no host and do not open on a phone |
+| `PUBLIC_BASE_URL` | The address people reach the app at, e.g. `https://intake.example.com`. Without this the fill-in form links sent on WhatsApp are `/fill/<token>` with no host and do not open on a phone |
 | `MCP_TOKEN` | Bearer token required on `POST /mcp` (register the same value in the Perfox integration) |
 | `APP_PASSWORD` | Without it the pages, the audit log and the upload APIs are open to anyone who can reach the URL. `/parsing/*` has no login in any case: keep it off the public internet, or put the company's SSO or ingress authentication in front |
 | `MCP_FILE_HOSTS` | Comma-separated hosts the agent may download resumes from. Empty means any https host |
@@ -94,19 +94,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 Everything else is fixed: service `resume-agent-mcp`, provider `perfox`, operations `resume.extract` and `jd.extract`, the tenant and user from `QUESTLIGHT_TOKEN`, and writes every 5 s or 200 events.
 
 **Network:**
-- The ingress or load balancer must allow request bodies up to `MAX_UPLOAD_MB` (default 5 MB; nginx's default limit is 1 MB, which would refuse most resumes) and wait at least **300 s** for a response: the chat page waits up to 280 s for the agent, and creating a job from a JD can take two minutes inside Questlight.
+- The ingress or load balancer must allow request bodies up to `MAX_UPLOAD_MB` (default 5 MB; nginx's default limit is 1 MB, which would refuse most resumes) and wait at least **300 s** for a response on `/mcp`. The page routes (`/api/chat`, `/api/process`, the fill-in form's submit) answer at once with an id and the page polls `GET /api/chat/{id}`, `/api/process/{id}` and `/api/form/{token}/job/{id}` every few seconds (`app/tasks.py`, `static/poll.js`), so none of them holds a request open for long: they work behind a proxy such as Cloudflare, which cuts a request after 100 s with a 524. Route those paths too (`/api/*`, `/static/*`, `/fill/*`).
 - Outbound HTTPS is needed to the Perfox API, the Questlight API and matching service, and the file storage Perfox links point to.
 - `GET /parsing/health` answers 200 without a login and suits a liveness probe.
 
-## Vercel Deployment
-
-Configured in [`pyproject.toml`](pyproject.toml) (`app.main:app` entrypoint) and [`vercel.json`](vercel.json) (`bom1` region, `maxDuration: 300`).
-
-1. Import the repository in Vercel and configure environment variables from [`.env.example`](.env.example).
-2. Protect `/mcp` with `MCP_TOKEN` and set `APP_PASSWORD` before sharing public URLs. Disable Vercel Deployment Protection (or configure protection bypass) so Perfox can reach `/mcp`.
-3. Register `https://<project>.vercel.app/mcp` in Perfox (see [`docs/perfox-agent-setup.md`](docs/perfox-agent-setup.md)).
-
-### Runtime Notes
-- **Stateless instances:** In-memory intake state (`Intake` 30-minute cache) lives per serverless instance, so multi-instance production deployments require external storage (e.g., Redis). The audit log, traces and usage are in MongoDB (`MONGODB_URI`), which Vercel must be able to reach.
-- **Upload limit:** Vercel request bodies cap at 4.5 MB (`MAX_UPLOAD_MB` defaults to `4` on Vercel).
+## Runtime Notes
 - **Long-running tools:** Perfox enforces a 30s client timeout on MCP tool calls; long parse/create calls return `status: "still_working"` at 24s (`PROCESS_SOFT_DEADLINE_S`) while continuing in the background so the follow-up tool call joins the completed result.

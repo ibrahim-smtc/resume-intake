@@ -301,6 +301,7 @@
   </div>
 
   <script src="/static/trace-view.js"></script>
+  <script src="/static/poll.js"></script>
   <script src="/static/form-view.js"></script>
   <script>
     const frame = document.getElementById("frame");
@@ -313,7 +314,7 @@
     const text = document.getElementById("text");
     const chip = document.getElementById("chip");
     const chipName = document.getElementById("chip-name");
-    let maxMb = 5;         // the server's upload limit, read from /api/config (4 on Vercel)
+    let maxMb = 5;         // the server's upload limit, read from /api/config (4 or 5)
     let attached = null;   // the resume waiting to be sent
     let busy = false;      // the parser takes one file at a time, so one upload at a time
     let agentMode = false; // true when the server has a Perfox webhook: the text box then talks to the agent
@@ -453,9 +454,9 @@
         body.append("session_id", sessionId);
         body.append("message", words);
         if (file) body.append("file", file);
-        const resp = await fetch("/api/chat", { method: "POST", body });
-        r = await resp.json().catch(() => ({}));
-        if (!resp.ok) r = { ok: false, error: r.detail || "HTTP " + resp.status };
+        const got = await Poll.submit("/api/chat", { method: "POST", body }, job => "/api/chat/" + encodeURIComponent(job));
+        r = got.data || {};
+        if (!got.ok) r = { ok: false, error: r.detail || r.error || "HTTP " + got.status };
       } catch (err) {
         r = { ok: false, error: "couldn't reach the server (" + err.message + ")" };
       }
@@ -575,9 +576,9 @@
       try {
         const body = new FormData();
         body.append("file", file);
-        const resp = await fetch("/api/process", { method: "POST", body });
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
-        r = await resp.json();
+        const got = await Poll.submit("/api/process", { method: "POST", body }, job => "/api/process/" + encodeURIComponent(job));
+        if (!got.ok) throw new Error((got.data && (got.data.detail || got.data.error)) || "HTTP " + got.status);
+        r = got.data;
       } catch (err) {
         r = { ok: false, error: "couldn't reach the server (" + err.message + ")" };
       }
